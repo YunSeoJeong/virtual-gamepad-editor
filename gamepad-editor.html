@@ -1,0 +1,2633 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Virtual Gamepad Editor</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet">
+<!-- interact.js for drag/resize and snapping -->
+<script src="https://cdn.jsdelivr.net/npm/interactjs/dist/interact.min.js"></script>
+<style>
+:root {
+  --bg: #f8fafc;
+  --bg-2: #ffffff;
+  --bg-3: #f1f5f9;
+  --panel: #ffffff;
+  --panel-soft: #fbfdff;
+  --border: #e2e8f0;
+  --border-strong: #cbd5e1;
+  --text: #1e293b;
+  --text-dim: #64748b;
+  --text-mute: #94a3b8;
+  --accent: #2563eb;
+  --accent-2: #38bdf8;
+  --accent-soft: #dbeafe;
+  --kb: #0284c7;
+  --pad: #8b5cf6;
+  --danger: #ef4444;
+  --danger-soft: #fee2e2;
+  --ok: #10b981;
+  --warn: #f59e0b;
+
+  --shadow-1: 0 1px 0 rgba(255,255,255,0.95) inset, 0 8px 24px rgba(15,23,42,0.08);
+  --shadow-2: 0 18px 48px rgba(15,23,42,0.12);
+  --grid: rgba(148,163,184,0.28);
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0; padding: 0;
+  height: 100%;
+  background: var(--bg);
+  color: var(--text);
+  font-family: 'Space Grotesk', system-ui, sans-serif;
+  font-size: 13px;
+  overflow: hidden;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+button { font-family: inherit; }
+
+/* ===================== LAYOUT ===================== */
+.app {
+  display: grid;
+  grid-template-columns: 240px 1fr 300px;
+  grid-template-rows: 48px 1fr 28px;
+  height: 100vh;
+  width: 100vw;
+}
+
+.topbar {
+  grid-column: 1 / 4;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 14px;
+  background: var(--panel);
+  border-bottom: 1px solid var(--border);
+}
+
+.brand {
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  font-size: 14px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-right: 6px;
+}
+.brand-dot {
+  width: 10px; height: 10px;
+  background: linear-gradient(135deg, var(--accent), var(--accent-2));
+  border-radius: 2px;
+  transform: rotate(45deg);
+}
+
+.tb-divider {
+  width: 1px; height: 24px;
+  background: var(--border);
+  margin: 0 4px;
+}
+
+.tb-btn {
+  background: var(--bg-2);
+  border: 1px solid var(--border);
+  color: var(--text);
+  padding: 6px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 12px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  transition: all 0.15s;
+}
+.tb-btn:hover { background: var(--bg-3); border-color: var(--border-strong); }
+.tb-btn.primary {
+  background: linear-gradient(180deg, var(--accent), #1d4ed8);
+  color: #ffffff;
+  border-color: transparent;
+  font-weight: 600;
+}
+.tb-btn.primary:hover { filter: brightness(1.08); }
+.tb-btn.danger { color: var(--danger); }
+
+.tb-spacer { flex: 1; }
+
+.tb-select, .tb-input {
+  background: var(--bg-2);
+  border: 1px solid var(--border);
+  color: var(--text);
+  padding: 6px 8px;
+  border-radius: 6px;
+  font-size: 12px;
+  font-family: inherit;
+}
+.tb-input { width: 80px; }
+
+/* Sidebar (palette) */
+.sidebar-left {
+  background: var(--panel);
+  border-right: 1px solid var(--border);
+  overflow-y: auto;
+  padding: 14px 12px;
+}
+
+.section-title {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--text-mute);
+  margin: 4px 0 10px 4px;
+}
+
+.palette {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  margin-bottom: 18px;
+}
+.palette-item {
+  background: var(--bg-2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px 6px 8px;
+  cursor: grab;
+  text-align: center;
+  transition: all 0.15s;
+  font-size: 11px;
+  color: var(--text-dim);
+}
+.palette-item:hover {
+  border-color: var(--accent);
+  background: var(--bg-3);
+  color: var(--text);
+  transform: translateY(-1px);
+}
+.palette-item.dragging { opacity: 0.5; }
+.palette-item.mouse-region-item {
+  border-color: #fecaca;
+  color: var(--danger);
+}
+.palette-item.mouse-region-item:hover {
+  border-color: var(--danger);
+}
+.palette-icon {
+  width: 36px; height: 36px;
+  margin: 0 auto 4px;
+  display: flex; align-items: center; justify-content: center;
+}
+.palette-icon svg { width: 100%; height: 100%; }
+
+/* Canvas */
+.canvas-wrap {
+  position: relative;
+  background:
+    linear-gradient(var(--grid) 1px, transparent 1px) 0 0 / 20px 20px,
+    linear-gradient(90deg, var(--grid) 1px, transparent 1px) 0 0 / 20px 20px,
+    radial-gradient(ellipse at center, #ffffff 0%, #f1f5f9 72%, #eaf0f8 100%);
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.canvas-frame {
+  position: relative;
+  background: #ffffff;
+  box-shadow: var(--shadow-2), 0 0 0 1px var(--border-strong);
+  /* size set by JS based on resolution and zoom */
+}
+
+.canvas-bg-image {
+  position: absolute; inset: 0;
+  width: 100%; height: 100%;
+  object-fit: cover;
+  pointer-events: none;
+  opacity: 0.6;
+}
+
+.canvas-overlay {
+  position: absolute; inset: 0;
+  pointer-events: auto;
+}
+
+/* Snap guidelines */
+.guide {
+  position: absolute;
+  background: var(--accent);
+  pointer-events: none;
+  z-index: 100;
+  box-shadow: 0 0 4px var(--accent);
+}
+.guide.h { height: 1px; left: 0; right: 0; }
+.guide.v { width: 1px; top: 0; bottom: 0; }
+
+/* Components on canvas */
+.gp-component {
+  position: absolute;
+  touch-action: none;
+  cursor: move;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 2px solid #cbd5e1;
+  background: rgba(255, 255, 255, 0.94);
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 600;
+  user-select: none;
+  backdrop-filter: blur(2px);
+  transition: border-color 0.12s, box-shadow 0.12s;
+}
+.gp-component.selected {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px rgba(37,99,235,0.18), 0 10px 26px rgba(37,99,235,0.20);
+  z-index: 50;
+}
+.gp-component.locked { opacity: 0.65; cursor: not-allowed; }
+
+.gp-component.shape-circle { border-radius: 50%; }
+.gp-component.shape-pill { border-radius: 999px; }
+.gp-component.shape-square { border-radius: 8px; }
+.gp-component.shape-region { border-style: dashed; background: #f0f9ff; }
+
+/* Color hint by input type */
+.gp-component[data-input-type="keyboard"] { border-color: #7dd3fc; }
+.gp-component[data-input-type="controller"] { border-color: #c4b5fd; }
+.gp-component.selected[data-input-type] { border-color: var(--accent); }
+
+/* Handles */
+.gp-component .resize-handle,
+.mouse-region .resize-handle {
+  position: absolute;
+  width: 12px; height: 12px;
+  background: var(--accent);
+  border: 1.5px solid #ffffff;
+  border-radius: 2px;
+  z-index: 60;
+}
+.gp-component .resize-handle.se, .mouse-region .resize-handle.se { right: -7px; bottom: -7px; cursor: nwse-resize; }
+.gp-component .resize-handle.sw, .mouse-region .resize-handle.sw { left: -7px; bottom: -7px; cursor: nesw-resize; }
+.gp-component .resize-handle.ne, .mouse-region .resize-handle.ne { right: -7px; top: -7px; cursor: nesw-resize; }
+.gp-component .resize-handle.nw, .mouse-region .resize-handle.nw { left: -7px; top: -7px; cursor: nwse-resize; }
+
+/* Mouse-ignore visualization */
+.gp-component.mouse-ignore {
+  background-image:
+    repeating-linear-gradient(
+      45deg,
+      rgba(239, 68, 68, 0.14) 0,
+      rgba(239, 68, 68, 0.14) 6px,
+      transparent 6px,
+      transparent 12px
+    );
+}
+.gp-component .badge {
+  position: absolute;
+  top: -8px; left: -2px;
+  font-size: 9px;
+  padding: 1px 5px;
+  background: var(--bg-3);
+  border: 1px solid var(--border-strong);
+  border-radius: 3px;
+  color: var(--text-dim);
+  letter-spacing: 0.04em;
+}
+.gp-component .badge.kb { color: var(--kb); border-color: var(--kb); }
+.gp-component .badge.pad { color: var(--pad); border-color: var(--pad); }
+
+/* Selection box for marquee */
+.marquee {
+  position: absolute;
+  border: 1px dashed var(--accent);
+  background: rgba(37,99,235,0.08);
+  pointer-events: none;
+  z-index: 90;
+}
+
+/* Sidebar (inspector) */
+.sidebar-right {
+  background: var(--panel);
+  border-left: 1px solid var(--border);
+  overflow-y: auto;
+  padding: 14px 12px;
+}
+
+.field {
+  margin-bottom: 12px;
+}
+.field-label {
+  display: block;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--text-mute);
+  margin-bottom: 5px;
+  font-weight: 600;
+}
+.field-row { display: flex; gap: 6px; }
+.field-row .tb-input { flex: 1; width: auto; }
+
+.input-text, .input-num, .input-select {
+  width: 100%;
+  background: var(--bg-2);
+  border: 1px solid var(--border);
+  color: var(--text);
+  padding: 6px 8px;
+  border-radius: 5px;
+  font-size: 12px;
+  font-family: inherit;
+}
+.input-text:focus, .input-num:focus, .input-select:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.checkbox {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  font-size: 12px;
+  padding: 4px 0;
+  color: var(--text-dim);
+}
+.checkbox input { accent-color: var(--accent); }
+
+.btn-group {
+  display: flex;
+  gap: 4px;
+  background: var(--bg-2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 2px;
+}
+.btn-group button {
+  flex: 1;
+  background: transparent;
+  border: none;
+  color: var(--text-dim);
+  padding: 5px 6px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 11px;
+  transition: all 0.12s;
+}
+.btn-group button:hover { color: var(--text); }
+.btn-group button.active {
+  background: var(--bg-3);
+  color: var(--accent);
+}
+
+.empty-inspector {
+  text-align: center;
+  padding: 30px 10px;
+  color: var(--text-mute);
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+/* Statusbar */
+.statusbar {
+  grid-column: 1 / 4;
+  background: var(--panel);
+  border-top: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  padding: 0 12px;
+  gap: 14px;
+  font-size: 11px;
+  color: var(--text-dim);
+  font-family: 'JetBrains Mono', monospace;
+}
+.status-pill {
+  display: inline-flex; align-items: center; gap: 5px;
+}
+.status-dot {
+  width: 6px; height: 6px; border-radius: 50%;
+  background: var(--ok);
+}
+
+/* Resolution tabs */
+.res-tabs {
+  display: flex;
+  gap: 2px;
+  background: var(--bg-2);
+  border-radius: 6px;
+  padding: 2px;
+  border: 1px solid var(--border);
+}
+.res-tab {
+  background: transparent;
+  border: none;
+  color: var(--text-dim);
+  padding: 4px 10px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 11px;
+  font-family: 'JetBrains Mono', monospace;
+}
+.res-tab:hover { color: var(--text); }
+.res-tab.active { background: var(--bg-3); color: var(--accent); }
+.res-tab .x {
+  margin-left: 6px;
+  color: var(--text-mute);
+  cursor: pointer;
+}
+.res-tab .x:hover { color: var(--danger); }
+
+/* Modal */
+.modal-backdrop {
+  position: fixed; inset: 0;
+  background: rgba(15, 23, 42, 0.18);
+  display: none;
+  align-items: center; justify-content: center;
+  z-index: 1000;
+}
+.modal-backdrop.show { display: flex; }
+.modal {
+  background: var(--panel);
+  border: 1px solid var(--border-strong);
+  border-radius: 12px;
+  padding: 20px;
+  width: min(540px, 90vw);
+  max-height: 80vh;
+  overflow: auto;
+  box-shadow: var(--shadow-2);
+}
+.modal h2 {
+  margin: 0 0 14px;
+  font-size: 16px;
+  font-weight: 600;
+}
+.modal textarea {
+  width: 100%;
+  min-height: 280px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  color: var(--text);
+  padding: 10px;
+  border-radius: 6px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  resize: vertical;
+}
+.modal-actions {
+  display: flex; gap: 8px; justify-content: flex-end;
+  margin-top: 12px;
+}
+
+/* Help icon tooltip */
+.help-tip {
+  display: inline-block;
+  margin-left: 5px;
+  width: 13px; height: 13px;
+  border-radius: 50%;
+  background: var(--bg-3);
+  color: var(--text-mute);
+  font-size: 9px;
+  text-align: center;
+  line-height: 13px;
+  cursor: help;
+  font-weight: 700;
+}
+
+/* Mouse-ignore region overlay */
+.mouse-region {
+  position: absolute;
+  border: 2px dashed var(--danger);
+  background: rgba(254, 226, 226, 0.68);
+  pointer-events: auto;
+  cursor: move;
+}
+.mouse-region.selected {
+  border-color: var(--accent);
+  background: rgba(219, 234, 254, 0.74);
+}
+.mouse-region .label {
+  position: absolute;
+  top: 4px; left: 6px;
+  font-size: 10px;
+  color: var(--danger);
+  font-weight: 600;
+  background: #ffffff;
+  padding: 1px 5px;
+  border-radius: 3px;
+}
+
+/* Scrollbar */
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track { background: var(--bg); }
+::-webkit-scrollbar-thumb { background: var(--bg-3); border-radius: 4px; }
+::-webkit-scrollbar-thumb:hover { background: var(--border-strong); }
+
+/* Subtle drag state */
+.dragging-active * { cursor: grabbing !important; }
+
+/* Resolution preset picker */
+.res-presets {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+  margin-top: 10px;
+}
+.res-preset {
+  background: var(--bg-2);
+  border: 1px solid var(--border);
+  color: var(--text);
+  padding: 8px;
+  border-radius: 5px;
+  cursor: pointer;
+  font-size: 11px;
+  text-align: left;
+  font-family: 'JetBrains Mono', monospace;
+}
+.res-preset:hover { border-color: var(--accent); }
+
+.zoom-pill {
+  display: flex; align-items: center; gap: 4px;
+  background: var(--bg-2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 2px;
+}
+.zoom-pill button {
+  background: transparent; border: none; color: var(--text);
+  width: 22px; height: 22px; border-radius: 3px; cursor: pointer; font-size: 13px;
+}
+.zoom-pill button:hover { background: var(--bg-3); }
+.zoom-pill .val {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px; color: var(--text-dim);
+  padding: 0 6px; min-width: 38px; text-align: center;
+}
+
+/* Toast */
+.toast {
+  position: fixed;
+  bottom: 40px; left: 50%;
+  transform: translateX(-50%);
+  background: var(--bg-3);
+  border: 1px solid var(--border-strong);
+  padding: 8px 14px;
+  border-radius: 6px;
+  font-size: 12px;
+  color: var(--text);
+  box-shadow: var(--shadow-2);
+  z-index: 2000;
+  opacity: 0;
+  transition: opacity 0.2s, transform 0.2s;
+  pointer-events: none;
+}
+.toast.show { opacity: 1; transform: translateX(-50%) translateY(-4px); }
+.toast.error { border-color: var(--danger); color: var(--danger); }
+
+/* Visual key icon for input type */
+.input-type-toggle {
+  display: flex;
+  background: var(--bg-2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  overflow: hidden;
+}
+.input-type-toggle button {
+  flex: 1;
+  background: transparent;
+  border: none;
+  color: var(--text-dim);
+  padding: 6px;
+  cursor: pointer;
+  font-size: 11px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+}
+.input-type-toggle button.active.kb { background: #e0f2fe; color: var(--kb); }
+.input-type-toggle button.active.pad { background: #ede9fe; color: var(--pad); }
+
+/* Polished white theme refinements */
+.topbar, .sidebar-left, .sidebar-right, .statusbar {
+  box-shadow: var(--shadow-1);
+}
+.palette-item, .tb-btn, .input-text, .input-num, .input-select, .res-preset, .zoom-pill, .btn-group {
+  box-shadow: 0 1px 2px rgba(15,23,42,0.03);
+}
+.palette-item:hover, .tb-btn:hover, .res-preset:hover {
+  box-shadow: 0 6px 16px rgba(15,23,42,0.08);
+}
+.canvas-frame {
+  border-radius: 8px;
+}
+.gp-component {
+  box-shadow: 0 4px 14px rgba(15,23,42,0.08);
+}
+.gp-component.selected {
+  box-shadow: 0 0 0 3px rgba(37,99,235,0.18), 0 10px 26px rgba(37,99,235,0.20);
+}
+.gp-component .resize-handle,
+.mouse-region .resize-handle {
+  box-shadow: 0 1px 4px rgba(15,23,42,0.18);
+}
+.mouse-region {
+  border-color: #f87171;
+}
+.mouse-region .label {
+  border: 1px solid #fecaca;
+}
+.toast {
+  background: #ffffff;
+}
+.modal textarea {
+  background: #fbfdff;
+}
+</style>
+</head>
+<body>
+
+<div class="app">
+
+  <!-- ============ TOP BAR ============ -->
+  <div class="topbar">
+    <div class="brand">
+      <div class="brand-dot"></div>
+      <span>VIRTUAL GAMEPAD EDITOR</span>
+    </div>
+
+    <div class="tb-divider"></div>
+
+    <button class="tb-btn" id="btn-new" title="새 레이아웃">⊕ New</button>
+    <button class="tb-btn" id="btn-import">↓ Import JSON</button>
+    <button class="tb-btn primary" id="btn-export">↑ Export JSON</button>
+
+    <div class="tb-divider"></div>
+
+    <button class="tb-btn" id="btn-bg">🖼 Background</button>
+    <button class="tb-btn" id="btn-bg-clear" title="배경 제거" style="padding: 6px 8px;">✕</button>
+    <label class="checkbox" style="margin-left: 4px;">
+      <input type="checkbox" id="chk-show-bg" checked /> Show
+    </label>
+
+    <div class="tb-divider"></div>
+
+    <span style="font-size: 11px; color: var(--text-mute);">SNAP</span>
+    <label class="checkbox"><input type="checkbox" id="chk-snap-grid" checked /> Grid</label>
+    <label class="checkbox"><input type="checkbox" id="chk-snap-elem" checked /> Elements</label>
+    <input type="number" id="grid-size" class="tb-input" value="10" min="1" max="100" style="width: 50px;" title="Grid size (px)" />
+
+    <div class="tb-spacer"></div>
+
+    <div class="zoom-pill">
+      <button id="btn-zoom-out">−</button>
+      <span class="val" id="zoom-val">50%</span>
+      <button id="btn-zoom-in">+</button>
+      <button id="btn-zoom-fit" style="width: auto; padding: 0 6px; font-size: 11px;">FIT</button>
+    </div>
+  </div>
+
+  <!-- ============ LEFT SIDEBAR (palette) ============ -->
+  <div class="sidebar-left">
+    <div class="section-title">Components</div>
+    <div class="palette" id="palette"></div>
+
+    <div class="section-title">Layout Meta</div>
+    <div class="field">
+      <label class="field-label">Layout name</label>
+      <input type="text" id="meta-name" class="input-text" placeholder="My Gamepad" />
+    </div>
+    <div class="field">
+      <label class="field-label">Description</label>
+      <input type="text" id="meta-desc" class="input-text" placeholder="optional" />
+    </div>
+
+    <div class="section-title">Resolution Layouts</div>
+    <div id="res-list" style="display: flex; flex-direction: column; gap: 5px;"></div>
+    <button class="tb-btn" id="btn-add-res" style="width: 100%; margin-top: 8px; justify-content: center;">+ Add resolution</button>
+
+    <div class="section-title" style="margin-top: 18px;">Distribute</div>
+    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 5px;">
+      <button class="tb-btn" id="dist-h" title="가로 균등 분배">⇆ Horiz</button>
+      <button class="tb-btn" id="dist-v" title="세로 균등 분배">⇅ Vert</button>
+      <button class="tb-btn" id="align-l" title="왼쪽 정렬">⊢ Left</button>
+      <button class="tb-btn" id="align-r" title="오른쪽 정렬">⊣ Right</button>
+      <button class="tb-btn" id="align-t" title="위 정렬">⊤ Top</button>
+      <button class="tb-btn" id="align-b" title="아래 정렬">⊥ Bot</button>
+      <button class="tb-btn" id="align-cx" title="가로 중앙">↕ CenH</button>
+      <button class="tb-btn" id="align-cy" title="세로 중앙">↔ CenV</button>
+    </div>
+  </div>
+
+  <!-- ============ CANVAS ============ -->
+  <div class="canvas-wrap" id="canvas-wrap">
+    <div class="canvas-frame" id="canvas-frame">
+      <img class="canvas-bg-image" id="canvas-bg" style="display: none;" />
+      <div class="canvas-overlay" id="canvas-overlay"></div>
+    </div>
+  </div>
+
+  <!-- ============ RIGHT SIDEBAR (inspector) ============ -->
+  <div class="sidebar-right" id="inspector">
+    <div class="empty-inspector">
+      Select a component on the canvas<br />
+      to edit its properties.<br /><br />
+      <span style="color: var(--text-mute); font-size: 11px;">Drag from the palette to add new ones.</span>
+    </div>
+  </div>
+
+  <!-- ============ STATUS BAR ============ -->
+  <div class="statusbar">
+    <span class="status-pill"><span class="status-dot"></span><span id="status-msg">Ready</span></span>
+    <span id="status-res">—</span>
+    <span id="status-count">0 components</span>
+    <span id="status-mouse" style="margin-left:auto;">x: 0, y: 0</span>
+  </div>
+</div>
+
+<!-- IMPORT/EXPORT MODAL -->
+<div class="modal-backdrop" id="modal">
+  <div class="modal">
+    <h2 id="modal-title">Export JSON</h2>
+    <textarea id="modal-text" spellcheck="false"></textarea>
+    <div class="modal-actions">
+      <button class="tb-btn" id="modal-copy">Copy</button>
+      <button class="tb-btn" id="modal-download">Download</button>
+      <button class="tb-btn" id="modal-cancel">Cancel</button>
+      <button class="tb-btn primary" id="modal-confirm" style="display:none;">Apply</button>
+    </div>
+  </div>
+</div>
+
+<!-- ADD RESOLUTION MODAL -->
+<div class="modal-backdrop" id="res-modal">
+  <div class="modal" style="width: 380px;">
+    <h2>Add Resolution Layout</h2>
+    <div class="field">
+      <label class="field-label">Width × Height (px)</label>
+      <div class="field-row">
+        <input type="number" id="new-w" class="input-num" placeholder="1920" />
+        <span style="align-self:center; color: var(--text-mute);">×</span>
+        <input type="number" id="new-h" class="input-num" placeholder="1080" />
+      </div>
+    </div>
+    <div class="field">
+      <label class="field-label">Copy components from</label>
+      <select id="copy-from" class="input-select"><option value="">(empty)</option></select>
+    </div>
+    <div class="res-presets">
+      <button class="res-preset" data-w="1920" data-h="1080">1920 × 1080</button>
+      <button class="res-preset" data-w="2560" data-h="1440">2560 × 1440</button>
+      <button class="res-preset" data-w="1280" data-h="720">1280 × 720</button>
+      <button class="res-preset" data-w="1440" data-h="900">1440 × 900</button>
+      <button class="res-preset" data-w="2340" data-h="1080">2340 × 1080</button>
+      <button class="res-preset" data-w="2778" data-h="1284">2778 × 1284</button>
+    </div>
+    <div class="modal-actions">
+      <button class="tb-btn" id="res-cancel">Cancel</button>
+      <button class="tb-btn primary" id="res-add">Add</button>
+    </div>
+  </div>
+</div>
+
+<input type="file" id="file-input" accept=".json,application/json" style="display:none;" />
+<input type="file" id="bg-input" accept="image/*" style="display:none;" />
+
+<div class="toast" id="toast"></div>
+
+<script>
+/* ===================================================================
+   PART 2 — APPLICATION LOGIC
+   =================================================================== */
+
+/* ---------- Component definitions ---------- */
+const COMPONENT_TYPES = {
+  button: {
+    label: 'Button',
+    defaultSize: { w: 80, h: 80 },
+    shape: 'circle',
+    defaultLabel: 'A',
+    inputType: 'controller',
+    description: '단일 버튼 (A/B/X/Y, 키 등)'
+  },
+  dpad: {
+    label: 'D-Pad',
+    defaultSize: { w: 160, h: 160 },
+    shape: 'square',
+    defaultLabel: '✛',
+    inputType: 'controller',
+    description: '4방향/8방향 패드'
+  },
+  stick: {
+    label: 'Analog Stick',
+    defaultSize: { w: 140, h: 140 },
+    shape: 'circle',
+    defaultLabel: '◉',
+    inputType: 'controller',
+    description: '아날로그 조이스틱'
+  },
+  trigger: {
+    label: 'Trigger',
+    defaultSize: { w: 100, h: 50 },
+    shape: 'pill',
+    defaultLabel: 'L2',
+    inputType: 'controller',
+    description: '아날로그 트리거 (LT/RT)'
+  },
+  shoulder: {
+    label: 'Shoulder',
+    defaultSize: { w: 100, h: 40 },
+    shape: 'pill',
+    defaultLabel: 'L1',
+    inputType: 'controller',
+    description: '범퍼 (LB/RB)'
+  },
+  key: {
+    label: 'Key',
+    defaultSize: { w: 60, h: 60 },
+    shape: 'square',
+    defaultLabel: 'W',
+    inputType: 'keyboard',
+    description: '키보드 키'
+  },
+  combo: {
+    label: 'Combo',
+    defaultSize: { w: 120, h: 60 },
+    shape: 'pill',
+    defaultLabel: 'Ctrl+C',
+    inputType: 'keyboard',
+    description: '키 조합'
+  },
+  touchpad: {
+    label: 'Trackpad',
+    defaultSize: { w: 240, h: 160 },
+    shape: 'square',
+    defaultLabel: 'TRACKPAD',
+    inputType: 'controller',
+    description: '터치/마우스 트랙패드 영역'
+  },
+  region: {
+    label: 'Region',
+    defaultSize: { w: 200, h: 200 },
+    shape: 'region',
+    defaultLabel: 'REGION',
+    inputType: 'controller',
+    description: '멀티터치/제스처 영역'
+  },
+  mouseRegion: {
+    label: 'Mouse Zone',
+    defaultSize: { w: 200, h: 200 },
+    shape: 'region',
+    defaultLabel: 'MOUSE',
+    inputType: 'controller',
+    description: '마우스 무시/허용 영역 (별도 레이어)',
+    isMouseRegion: true
+  }
+};
+
+const PALETTE_ICONS = {
+  button: '<svg viewBox="0 0 40 40"><circle cx="20" cy="20" r="14" fill="none" stroke="currentColor" stroke-width="2"/><circle cx="20" cy="20" r="6" fill="currentColor" opacity="0.4"/></svg>',
+  dpad: '<svg viewBox="0 0 40 40"><path d="M14 8h12v8h8v8h-8v8H14v-8H6v-8h8z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></svg>',
+  stick: '<svg viewBox="0 0 40 40"><circle cx="20" cy="20" r="15" fill="none" stroke="currentColor" stroke-width="2"/><circle cx="24" cy="16" r="6" fill="currentColor" opacity="0.5"/></svg>',
+  trigger: '<svg viewBox="0 0 40 40"><rect x="6" y="14" width="28" height="12" rx="6" fill="none" stroke="currentColor" stroke-width="2"/><path d="M14 20h12" stroke="currentColor" stroke-width="2"/></svg>',
+  shoulder: '<svg viewBox="0 0 40 40"><rect x="4" y="16" width="32" height="8" rx="4" fill="none" stroke="currentColor" stroke-width="2"/></svg>',
+  key: '<svg viewBox="0 0 40 40"><rect x="10" y="10" width="20" height="20" rx="3" fill="none" stroke="currentColor" stroke-width="2"/><text x="20" y="25" text-anchor="middle" font-size="11" fill="currentColor" font-family="monospace">K</text></svg>',
+  combo: '<svg viewBox="0 0 40 40"><rect x="4" y="14" width="14" height="12" rx="2" fill="none" stroke="currentColor" stroke-width="1.5"/><rect x="22" y="14" width="14" height="12" rx="2" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M18 20h4" stroke="currentColor" stroke-width="1.5"/></svg>',
+  touchpad: '<svg viewBox="0 0 40 40"><rect x="6" y="10" width="28" height="20" rx="3" fill="none" stroke="currentColor" stroke-width="2"/><circle cx="20" cy="20" r="2" fill="currentColor"/></svg>',
+  region: '<svg viewBox="0 0 40 40"><rect x="6" y="6" width="28" height="28" rx="2" fill="none" stroke="currentColor" stroke-width="2" stroke-dasharray="3 3"/></svg>',
+  mouseRegion: '<svg viewBox="0 0 40 40"><rect x="6" y="6" width="28" height="28" rx="2" fill="none" stroke="#ef4444" stroke-width="2" stroke-dasharray="3 3"/><path d="M14 14 L20 20 L14 22 L18 26" fill="none" stroke="#ef4444" stroke-width="1.5"/></svg>'
+};
+
+
+/* ---------- Standardized binding code lists ----------
+   Keyboard: W3C/MDN KeyboardEvent.code values (physical key position).
+   Gamepad: W3C Gamepad API Standard Gamepad canonical order, exposed here as
+            readable aliases plus index-based codes for unambiguous runtimes.
+---------- */
+const KEYBOARD_CODE_OPTIONS = [
+  'Escape','F1','F2','F3','F4','F5','F6','F7','F8','F9','F10','F11','F12','PrintScreen','ScrollLock','Pause',
+  'Backquote','Digit1','Digit2','Digit3','Digit4','Digit5','Digit6','Digit7','Digit8','Digit9','Digit0','Minus','Equal','Backspace',
+  'Tab','KeyQ','KeyW','KeyE','KeyR','KeyT','KeyY','KeyU','KeyI','KeyO','KeyP','BracketLeft','BracketRight','Backslash',
+  'CapsLock','KeyA','KeyS','KeyD','KeyF','KeyG','KeyH','KeyJ','KeyK','KeyL','Semicolon','Quote','Enter',
+  'ShiftLeft','KeyZ','KeyX','KeyC','KeyV','KeyB','KeyN','KeyM','Comma','Period','Slash','ShiftRight',
+  'ControlLeft','MetaLeft','AltLeft','Space','AltRight','MetaRight','ContextMenu','ControlRight',
+  'Insert','Home','PageUp','Delete','End','PageDown','ArrowUp','ArrowLeft','ArrowDown','ArrowRight',
+  'NumLock','NumpadDivide','NumpadMultiply','NumpadSubtract','Numpad7','Numpad8','Numpad9','NumpadAdd',
+  'Numpad4','Numpad5','Numpad6','Numpad1','Numpad2','Numpad3','NumpadEnter','Numpad0','NumpadDecimal',
+  'IntlBackslash','IntlRo','IntlYen','KanaMode','Lang1','Lang2','Lang3','Lang4','Lang5','Convert','NonConvert'
+];
+
+const CONTROLLER_BUTTON_OPTIONS = [
+  // Human-friendly aliases for Standard Gamepad buttons.
+  'A','B','X','Y','LB','RB','LT','RT','Back','Start','Select','Menu','LeftStickButton','RightStickButton','LS','RS',
+  'DPadUp','DPadDown','DPadLeft','DPadRight','Guide','Home',
+  // Index-based canonical codes from the W3C standard layout.
+  'Button0','Button1','Button2','Button3','Button4','Button5','Button6','Button7','Button8','Button9','Button10','Button11','Button12','Button13','Button14','Button15','Button16'
+];
+
+const CONTROLLER_AXIS_OPTIONS = [
+  'LeftStickX','LeftStickY','RightStickX','RightStickY','Axis0','Axis1','Axis2','Axis3'
+];
+
+// Mouse: based on MouseEvent.button (0~4) and MouseEvent.buttons bitmask (1,2,4,8,16).
+// Human-friendly names are exported by default, while index/mask aliases are offered for unambiguous runtimes.
+const MOUSE_BUTTON_OPTIONS = [
+  'MouseLeft','MouseMiddle','MouseRight','MouseBack','MouseForward',
+  'MouseButton0','MouseButton1','MouseButton2','MouseButton3','MouseButton4'
+];
+const MOUSE_BUTTON_MASK_OPTIONS = [
+  'MouseButtons1','MouseButtons2','MouseButtons4','MouseButtons8','MouseButtons16',
+  'MouseMaskLeft','MouseMaskRight','MouseMaskMiddle','MouseMaskBack','MouseMaskForward'
+];
+const MOUSE_CODE_OPTIONS = [
+  ...MOUSE_BUTTON_OPTIONS,
+  ...MOUSE_BUTTON_MASK_OPTIONS,
+  'MouseX','MouseY','MouseWheelX','MouseWheelY','MouseWheelUp','MouseWheelDown'
+];
+const TOUCH_CODE_OPTIONS = ['TouchX','TouchY','TouchPress','Touch0X','Touch0Y','Touch1X','Touch1Y'];
+
+function ensureDatalist(id, values) {
+  let list = document.getElementById(id);
+  if (!list) {
+    list = document.createElement('datalist');
+    list.id = id;
+    document.body.appendChild(list);
+  }
+  list.innerHTML = '';
+  [...new Set(values)].forEach(v => list.appendChild(el('option', { value: v })));
+}
+
+function buildBindingDatalists() {
+  ensureDatalist('keyboard-code-list', KEYBOARD_CODE_OPTIONS);
+  ensureDatalist('controller-button-list', CONTROLLER_BUTTON_OPTIONS);
+  ensureDatalist('controller-axis-list', CONTROLLER_AXIS_OPTIONS);
+  ensureDatalist('controller-any-list', [...CONTROLLER_BUTTON_OPTIONS, ...CONTROLLER_AXIS_OPTIONS]);
+  ensureDatalist('mouse-button-list', MOUSE_BUTTON_OPTIONS);
+  ensureDatalist('mouse-buttons-mask-list', MOUSE_BUTTON_MASK_OPTIONS);
+  ensureDatalist('mouse-code-list', MOUSE_CODE_OPTIONS);
+  ensureDatalist('touch-code-list', TOUCH_CODE_OPTIONS);
+  ensureDatalist('input-code-list', [...KEYBOARD_CODE_OPTIONS, ...CONTROLLER_BUTTON_OPTIONS, ...CONTROLLER_AXIS_OPTIONS, ...MOUSE_CODE_OPTIONS, ...TOUCH_CODE_OPTIONS]);
+}
+
+function bindingListFor(c, path) {
+  const inputType = c?.inputType || c?.runtime?.inputType || 'controller';
+  if (path === 'binding.keys') return 'keyboard-code-list';
+  if (path === 'binding.buttons') return inputType === 'mouse' ? 'mouse-button-list' : 'keyboard-code-list';
+  if (path === 'binding.button' && inputType === 'mouse') return 'mouse-button-list';
+  if (inputType === 'keyboard') return 'keyboard-code-list';
+  if (inputType === 'mouse') return 'mouse-code-list';
+  if (path === 'binding.axis' || path === 'binding.axisX' || path === 'binding.axisY') return 'controller-axis-list';
+  if (path.startsWith('binding.') || path.startsWith('bindings.')) return inputType === 'controller' ? 'controller-button-list' : 'keyboard-code-list';
+  if (path.includes('gestures.')) return 'input-code-list';
+  return '';
+}
+
+/* ---------- State ---------- */
+const SCHEMA_VERSION = '1.1';
+
+const state = {
+  meta: { name: '', description: '', version: SCHEMA_VERSION },
+  resolutions: [],            // [{ id, width, height, components: [], mouseRegions: [] }]
+  activeResId: null,
+  selectedIds: [],            // selected component ids
+  zoom: 0.5,
+  bgImage: null,              // dataURL
+  bgVisible: true,
+  snap: { grid: true, elements: true, gridSize: 10 },
+  dragGuides: { x: null, y: null }
+};
+
+let dragSession = null;
+
+let _idCounter = 1;
+const newId = (prefix = 'c') => `${prefix}_${Date.now().toString(36)}_${(_idCounter++).toString(36)}`;
+
+/* ---------- DOM helpers ---------- */
+const $ = sel => document.querySelector(sel);
+const $$ = sel => Array.from(document.querySelectorAll(sel));
+const el = (tag, attrs = {}, children = []) => {
+  const e = document.createElement(tag);
+  for (const k in attrs) {
+    if (k === 'class') e.className = attrs[k];
+    else if (k === 'style') e.style.cssText = attrs[k];
+    else if (k.startsWith('on') && typeof attrs[k] === 'function') e.addEventListener(k.slice(2), attrs[k]);
+    else if (k === 'dataset') Object.assign(e.dataset, attrs[k]);
+    else e.setAttribute(k, attrs[k]);
+  }
+  (Array.isArray(children) ? children : [children]).forEach(c => {
+    if (c == null) return;
+    e.appendChild(typeof c === 'string' ? document.createTextNode(c) : c);
+  });
+  return e;
+};
+
+function toast(msg, type = 'ok') {
+  const t = $('#toast');
+  t.textContent = msg;
+  t.classList.toggle('error', type === 'error');
+  t.classList.add('show');
+  clearTimeout(toast._t);
+  toast._t = setTimeout(() => t.classList.remove('show'), 2200);
+}
+
+/* ---------- Active resolution helpers ---------- */
+function getActiveRes() {
+  return state.resolutions.find(r => r.id === state.activeResId);
+}
+function getActiveComponents() {
+  const r = getActiveRes();
+  return r ? r.components : [];
+}
+function getActiveMouseRegions() {
+  const r = getActiveRes();
+  return r ? r.mouseRegions : [];
+}
+
+/* ---------- Initialization ---------- */
+function init() {
+  buildBindingDatalists();
+  buildPalette();
+  bindTopbar();
+  bindModals();
+  bindCanvas();
+  bindKeyboard();
+  bindAlignButtons();
+
+  // First resolution by default
+  if (state.resolutions.length === 0) {
+    addResolution(1920, 1080);
+  }
+  renderAll();
+}
+
+/* ---------- Build palette ---------- */
+function buildPalette() {
+  const palette = $('#palette');
+  palette.innerHTML = '';
+  for (const [type, def] of Object.entries(COMPONENT_TYPES)) {
+    const item = el('div', {
+      class: 'palette-item' + (def.isMouseRegion ? ' mouse-region-item' : ''),
+      title: def.description,
+      dataset: { type },
+      draggable: 'true'
+    }, [
+      el('div', { class: 'palette-icon' }, []),
+      def.label
+    ]);
+    item.querySelector('.palette-icon').innerHTML = PALETTE_ICONS[type] || '';
+    item.addEventListener('dragstart', e => {
+      e.dataTransfer.effectAllowed = 'copy';
+      e.dataTransfer.setData('text/component-type', type);
+      item.classList.add('dragging');
+    });
+    item.addEventListener('dragend', () => item.classList.remove('dragging'));
+    palette.appendChild(item);
+  }
+}
+
+/* ---------- Resolution management ---------- */
+function addResolution(w, h, copyFromId = null) {
+  const id = newId('res');
+  const newRes = {
+    id,
+    width: w,
+    height: h,
+    components: [],
+    mouseRegions: []
+  };
+  if (copyFromId) {
+    const src = state.resolutions.find(r => r.id === copyFromId);
+    if (src) {
+      // Scale components proportionally
+      const sx = w / src.width;
+      const sy = h / src.height;
+      newRes.components = src.components.map(c => ({
+        ...JSON.parse(JSON.stringify(c)),
+        id: newId('c'),
+        x: Math.round(c.x * sx),
+        y: Math.round(c.y * sy),
+        w: Math.round(c.w * sx),
+        h: Math.round(c.h * sy)
+      }));
+      newRes.mouseRegions = src.mouseRegions.map(r => ({
+        ...JSON.parse(JSON.stringify(r)),
+        id: newId('mr'),
+        x: Math.round(r.x * sx),
+        y: Math.round(r.y * sy),
+        w: Math.round(r.w * sx),
+        h: Math.round(r.h * sy)
+      }));
+    }
+  }
+  state.resolutions.push(newRes);
+  state.activeResId = id;
+  state.selectedIds = [];
+  renderAll();
+}
+
+function removeResolution(id) {
+  if (state.resolutions.length <= 1) {
+    toast('적어도 하나의 해상도는 있어야 합니다', 'error');
+    return;
+  }
+  if (!confirm('이 해상도 레이아웃을 삭제하시겠습니까?')) return;
+  state.resolutions = state.resolutions.filter(r => r.id !== id);
+  if (state.activeResId === id) {
+    state.activeResId = state.resolutions[0].id;
+    state.selectedIds = [];
+  }
+  renderAll();
+}
+
+function switchResolution(id) {
+  state.activeResId = id;
+  state.selectedIds = [];
+  renderAll();
+}
+
+/* ---------- Render: resolution tabs ---------- */
+function renderResolutionTabs() {
+  const list = $('#res-list');
+  list.innerHTML = '';
+  state.resolutions.forEach(r => {
+    const isActive = r.id === state.activeResId;
+    const tab = el('div', {
+      class: 'tb-btn' + (isActive ? ' primary' : ''),
+      style: 'width: 100%; justify-content: space-between; padding: 6px 10px;',
+      onclick: () => switchResolution(r.id)
+    }, [
+      el('span', {}, `${r.width}×${r.height}`),
+      el('span', {
+        style: 'opacity: 0.6; cursor: pointer; padding: 0 4px;',
+        title: '삭제',
+        onclick: e => { e.stopPropagation(); removeResolution(r.id); }
+      }, '✕')
+    ]);
+    list.appendChild(tab);
+  });
+}
+
+/* ---------- Render: canvas frame ---------- */
+function renderCanvasFrame() {
+  const r = getActiveRes();
+  const frame = $('#canvas-frame');
+  if (!r) return;
+  frame.style.width = (r.width * state.zoom) + 'px';
+  frame.style.height = (r.height * state.zoom) + 'px';
+  $('#status-res').textContent = `${r.width} × ${r.height}`;
+  $('#zoom-val').textContent = Math.round(state.zoom * 100) + '%';
+
+  const bg = $('#canvas-bg');
+  if (state.bgImage && state.bgVisible) {
+    bg.src = state.bgImage;
+    bg.style.display = 'block';
+  } else {
+    bg.style.display = 'none';
+  }
+}
+
+/* ---------- Render: components ---------- */
+function renderComponents() {
+  const r = getActiveRes();
+  const overlay = $('#canvas-overlay');
+  overlay.innerHTML = '';
+  if (!r) return;
+
+  // mouse regions first (lower z)
+  [...r.mouseRegions].sort((a,b)=>(a.z||0)-(b.z||0)).forEach(mr => {
+    const div = el('div', {
+      class: 'mouse-region' + (state.selectedIds.includes(mr.id) ? ' selected' : ''),
+      dataset: { id: mr.id, kind: 'mouseRegion' },
+      style: `left:${mr.x * state.zoom}px; top:${mr.y * state.zoom}px;
+              width:${mr.w * state.zoom}px; height:${mr.h * state.zoom}px; z-index:${mr.z || 0};`
+    }, [
+      el('span', { class: 'label' }, `MOUSE ${mr.behavior === 'ignore' ? 'IGNORE' : 'PASS'}`),
+      // resize handles for selected mouse regions
+      ...(state.selectedIds.includes(mr.id)
+        ? ['nw','ne','sw','se'].map(p => el('div', { class: `resize-handle ${p}` }))
+        : [])
+    ]);
+    overlay.appendChild(div);
+  });
+
+  [...r.components].sort((a,b)=>((a.runtime?.z ?? a.z ?? 0)- (b.runtime?.z ?? b.z ?? 0))).forEach(c => {
+    const def = COMPONENT_TYPES[c.type] || {};
+    const shape = c.shape || def.shape || 'square';
+    const div = el('div', {
+      class: `gp-component shape-${shape} ${state.selectedIds.includes(c.id) ? 'selected' : ''} ${c.locked ? 'locked' : ''} ${c.mouseIgnore ? 'mouse-ignore' : ''}`,
+      dataset: {
+        id: c.id,
+        kind: 'component',
+        inputType: c.inputType || c.runtime?.inputType || 'controller'
+      },
+      style: `left:${c.x * state.zoom}px; top:${c.y * state.zoom}px;
+              width:${c.w * state.zoom}px; height:${c.h * state.zoom}px;
+              font-size:${Math.max(10, Math.min(c.w, c.h) * state.zoom * 0.22)}px;
+              ${c.color ? `border-color:${c.color};` : ''}
+              ${c.bg ? `background:${c.bg};` : ''}
+              z-index:${c.runtime?.z ?? c.z ?? 0};`
+    }, [
+      el('span', { class: 'badge ' + (c.inputType === 'keyboard' ? 'kb' : 'pad') }, c.inputType === 'keyboard' ? 'KB' : (c.inputType === 'mouse' ? 'MOUSE' : 'PAD')),
+      el('span', { class: 'label' }, c.label || ''),
+      ...(state.selectedIds.includes(c.id) && !c.locked
+        ? ['nw','ne','sw','se'].map(p => el('div', { class: `resize-handle ${p}` }))
+        : [])
+    ]);
+    overlay.appendChild(div);
+  });
+
+  setupInteractions();
+}
+
+function renderAll() {
+  renderResolutionTabs();
+  renderCanvasFrame();
+  renderComponents();
+  renderInspector();
+  $('#status-count').textContent = `${getActiveComponents().length} components, ${getActiveMouseRegions().length} regions`;
+  $('#meta-name').value = state.meta.name || '';
+  $('#meta-desc').value = state.meta.description || '';
+}
+
+/* ---------- Inspector ---------- */
+function renderInspector() {
+  const insp = $('#inspector');
+  insp.innerHTML = '';
+
+  if (state.selectedIds.length === 0) {
+    insp.innerHTML = `<div class="empty-inspector">
+      Select a component on the canvas<br />
+      to edit its properties.<br /><br />
+      <span style="color: var(--text-mute); font-size: 11px;">
+        Drag from the palette to add new ones.<br/>
+        Hold <b>Shift</b> for multi-select.<br/>
+        <b>Del</b> to remove. <b>Ctrl+D</b> to duplicate.
+      </span>
+    </div>`;
+    return;
+  }
+
+  if (state.selectedIds.length > 1) {
+    insp.innerHTML = `<div class="section-title">${state.selectedIds.length} selected</div>
+      <div class="empty-inspector" style="padding: 10px;">Use the alignment & distribute buttons in the left panel.</div>`;
+    return;
+  }
+
+  const id = state.selectedIds[0];
+  const isMouseRegion = id.startsWith('mr_');
+  if (isMouseRegion) {
+    renderMouseRegionInspector(id);
+    return;
+  }
+
+  const c = getActiveComponents().find(x => x.id === id);
+  if (!c) return;
+  const def = COMPONENT_TYPES[c.type] || {};
+
+  const wrap = el('div');
+  wrap.appendChild(el('div', { class: 'section-title' }, `${def.label || c.type} • ${c.id.slice(-6)}`));
+
+  normalizeComponentRuntime(c);
+
+  // Input target
+  const clickCapableTypes = ['button','key','combo','shoulder','trigger'];
+  const inputOptions = (c.type === 'touchpad' || clickCapableTypes.includes(c.type))
+    ? [['controller','Controller'], ['keyboard','Keyboard'], ['mouse','Mouse']]
+    : [['controller','Controller'], ['keyboard','Keyboard']];
+  wrap.appendChild(makeSelectField('Input target', c.inputType || c.runtime?.inputType || 'controller', inputOptions,
+    v => { setComponentInputType(c, v); renderAll(); }));
+
+  // Label
+  wrap.appendChild(makeTextField('Label', c.label || '', v => { c.label = v; renderComponents(); }));
+
+  renderRuntimeInspectorFields(wrap, c);
+
+  // Position & size
+  const posField = el('div', { class: 'field' }, [
+    el('label', { class: 'field-label' }, 'Position & Size (px)')
+  ]);
+  posField.appendChild(makeNumGrid([
+    { label: 'X', val: c.x, on: v => { c.x = v; renderComponents(); } },
+    { label: 'Y', val: c.y, on: v => { c.y = v; renderComponents(); } },
+    { label: 'W', val: c.w, on: v => { c.w = Math.max(10, v); renderComponents(); } },
+    { label: 'H', val: c.h, on: v => { c.h = Math.max(10, v); renderComponents(); } }
+  ]));
+  wrap.appendChild(posField);
+
+  // Shape
+  wrap.appendChild(makeSelectField('Shape', c.shape || def.shape || 'square',
+    [['square','Square'],['circle','Circle'],['pill','Pill'],['region','Region']],
+    v => { c.shape = v; renderComponents(); }));
+
+  // Colors
+  const colorRow = el('div', { class: 'field' }, [
+    el('label', { class: 'field-label' }, 'Border color / fill')
+  ]);
+  colorRow.appendChild(el('div', { class: 'field-row' }, [
+    el('input', { type: 'color', value: c.color || '#ffffff', class: 'input-text', style: 'height:30px; padding:2px;',
+      oninput: e => { c.color = e.target.value; renderComponents(); } }),
+    el('input', { type: 'text', class: 'input-text', value: c.bg || '',
+      placeholder: 'rgba() or #hex (bg)',
+      onchange: e => { c.bg = e.target.value; renderComponents(); } })
+  ]));
+  wrap.appendChild(colorRow);
+
+  // Mouse behavior section
+  wrap.appendChild(el('div', { class: 'section-title', style: 'margin-top:18px;' }, 'Mouse behavior'));
+
+  const miCheck = el('label', { class: 'checkbox' }, [
+    el('input', { type: 'checkbox',
+      ...(c.mouseIgnore ? { checked: 'checked' } : {}),
+      onchange: e => { c.mouseIgnore = e.target.checked; renderComponents(); }
+    }),
+    'Ignore mouse input'
+  ]);
+  wrap.appendChild(miCheck);
+  wrap.appendChild(el('div', {
+    style: 'font-size: 10px; color: var(--text-mute); margin-top: 4px; line-height: 1.5;'
+  }, '체크 시 트랙패드 모드 마우스 조작이 이 컴포넌트를 통과하지 않습니다 (터치만 허용).'));
+
+  // Locked
+  wrap.appendChild(el('div', { class: 'field', style: 'margin-top:12px;' }, [
+    el('label', { class: 'checkbox' }, [
+      el('input', { type: 'checkbox',
+        ...(c.locked ? { checked: 'checked' } : {}),
+        onchange: e => { c.locked = e.target.checked; renderAll(); }
+      }),
+      'Lock position & size'
+    ])
+  ]));
+
+  // Runtime advanced settings are rendered above by component type.
+
+  // Actions
+  wrap.appendChild(el('div', { style: 'display:flex; gap:6px; margin-top:14px;' }, [
+    el('button', {
+      class: 'tb-btn',
+      style: 'flex:1; justify-content:center;',
+      onclick: () => duplicateSelected()
+    }, '⎘ Duplicate'),
+    el('button', {
+      class: 'tb-btn danger',
+      style: 'flex:1; justify-content:center;',
+      onclick: () => deleteSelected()
+    }, '✕ Delete')
+  ]));
+
+  insp.appendChild(wrap);
+}
+
+function renderMouseRegionInspector(id) {
+  const insp = $('#inspector');
+  const mr = getActiveMouseRegions().find(x => x.id === id);
+  if (!mr) return;
+  const wrap = el('div');
+  wrap.appendChild(el('div', { class: 'section-title' }, `Mouse Region • ${mr.id.slice(-6)}`));
+
+  wrap.appendChild(makeTextField('Name', mr.name || '', v => { mr.name = v; }));
+
+  wrap.appendChild(makeSelectField('Behavior', mr.behavior || 'ignore',
+    [['ignore','Ignore mouse'],['allow','Allow mouse pass-through']],
+    v => { mr.behavior = v; renderComponents(); }));
+
+  wrap.appendChild(el('div', { style: 'font-size:10px; color:var(--text-mute); margin:-6px 0 12px; line-height:1.5;' },
+    'Ignore: 이 영역에 들어온 마우스 이벤트는 무시됩니다 (터치 전용 영역).\nAllow: 마우스가 정상 동작합니다.'));
+
+  const posField = el('div', { class: 'field' }, [
+    el('label', { class: 'field-label' }, 'Position & Size (px)')
+  ]);
+  posField.appendChild(makeNumGrid([
+    { label: 'X', val: mr.x, on: v => { mr.x = v; renderComponents(); } },
+    { label: 'Y', val: mr.y, on: v => { mr.y = v; renderComponents(); } },
+    { label: 'W', val: mr.w, on: v => { mr.w = Math.max(10, v); renderComponents(); } },
+    { label: 'H', val: mr.h, on: v => { mr.h = Math.max(10, v); renderComponents(); } }
+  ]));
+  wrap.appendChild(posField);
+
+  wrap.appendChild(el('div', { style: 'display:flex; gap:6px; margin-top:14px;' }, [
+    el('button', {
+      class: 'tb-btn danger',
+      style: 'flex:1; justify-content:center;',
+      onclick: () => deleteSelected()
+    }, '✕ Delete')
+  ]));
+
+  insp.appendChild(wrap);
+}
+
+
+/* ---------- Runtime schema helpers ---------- */
+function setComponentInputType(c, inputType) {
+  c.inputType = inputType;
+  c.runtime = c.runtime || {};
+  c.runtime.inputType = inputType;
+  // Reset binding when the target class changes, because stick/dpad/button mappings are structurally different.
+  normalizeComponentRuntime(c, true);
+}
+
+function normalizeComponentRuntime(c, forceDefaults = false) {
+  c.runtime = c.runtime || {};
+  c.inputType = c.inputType || c.runtime.inputType || COMPONENT_TYPES[c.type]?.inputType || 'controller';
+  c.runtime.inputType = c.inputType;
+
+  if (['button','key','combo','shoulder'].includes(c.type)) {
+    c.runtime.behavior = c.runtime.behavior || (c.type === 'combo' ? 'tap' : 'hold');
+    if (c.inputType === 'keyboard') {
+      if (!c.runtime.binding || forceDefaults) {
+        c.runtime.binding = c.type === 'combo'
+          ? { keys: splitBindingList(c.binding || 'ControlLeft,KeyC') }
+          : { key: c.binding || (c.type === 'key' ? 'KeyW' : 'Space') };
+      }
+    } else if (c.inputType === 'mouse') {
+      if (!c.runtime.binding || forceDefaults) {
+        c.runtime.binding = c.type === 'combo'
+          ? { buttons: splitBindingList(c.binding || 'MouseLeft,MouseRight') }
+          : { button: c.binding || 'MouseLeft' };
+      }
+    } else {
+      if (!c.runtime.binding || forceDefaults) c.runtime.binding = { button: c.binding || defaultControllerButton(c.type, c.label) };
+    }
+  }
+
+  if (c.type === 'dpad') {
+    c.runtime.mode = c.runtime.mode || '4way';
+    if (!c.runtime.bindings || forceDefaults) {
+      c.runtime.bindings = c.inputType === 'keyboard'
+        ? { up:'KeyW', down:'KeyS', left:'KeyA', right:'KeyD', upLeft:'KeyW+KeyA', upRight:'KeyW+KeyD', downLeft:'KeyS+KeyA', downRight:'KeyS+KeyD' }
+        : { up:'DPadUp', down:'DPadDown', left:'DPadLeft', right:'DPadRight', upLeft:'DPadUp+DPadLeft', upRight:'DPadUp+DPadRight', downLeft:'DPadDown+DPadLeft', downRight:'DPadDown+DPadRight' };
+    }
+  }
+
+  if (c.type === 'stick') {
+    c.deadzone = Number.isFinite(parseFloat(c.deadzone)) ? parseFloat(c.deadzone) : 0.15;
+    if (c.fixed === undefined) c.fixed = true;
+    c.runtime.deadzone = c.deadzone;
+    c.runtime.fixed = c.fixed;
+    c.runtime.mode = c.runtime.mode || (c.inputType === 'keyboard' ? 'digital4way' : 'analog');
+    if (c.inputType === 'keyboard') {
+      if (!c.runtime.bindings || forceDefaults) c.runtime.bindings = { up:'KeyW', down:'KeyS', left:'KeyA', right:'KeyD' };
+    } else {
+      if (!c.runtime.binding || forceDefaults) c.runtime.binding = { axisX:'LeftStickX', axisY:'LeftStickY' };
+      c.runtime.range = c.runtime.range || [-1, 1];
+    }
+  }
+
+  if (c.type === 'trigger') {
+    if (c.analog === undefined) c.analog = c.inputType === 'controller';
+    c.runtime.analog = c.analog;
+    if (c.inputType === 'keyboard') {
+      if (!c.runtime.binding || forceDefaults) c.runtime.binding = { key: c.binding || 'ShiftLeft' };
+      c.runtime.analog = false;
+      c.analog = false;
+    } else if (c.inputType === 'mouse') {
+      if (!c.runtime.binding || forceDefaults) c.runtime.binding = { button: c.binding || 'MouseRight' };
+      c.runtime.analog = false;
+      c.analog = false;
+    } else {
+      if (!c.runtime.binding || forceDefaults) c.runtime.binding = { axis: c.binding || (String(c.label || '').includes('R') ? 'RT' : 'LT') };
+      c.runtime.range = c.runtime.range || [0, 1];
+    }
+  }
+
+  if (c.type === 'touchpad') {
+    if (!['mouse','controller','keyboard'].includes(c.inputType)) c.inputType = 'mouse';
+    c.runtime.inputType = c.inputType;
+    c.runtime.mode = c.runtime.mode || (c.inputType === 'mouse' ? 'relative' : 'absolute');
+    if (!c.runtime.binding || forceDefaults) {
+      c.runtime.binding = c.inputType === 'mouse'
+        ? { moveX:'MouseX', moveY:'MouseY', tap:'MouseLeft', twoFingerTap:'MouseRight', scrollY:'MouseWheelY' }
+        : { x:'TouchX', y:'TouchY', press:'TouchPress' };
+    }
+    c.runtime.sensitivity = c.runtime.sensitivity ?? 1.0;
+    c.runtime.invertY = !!c.runtime.invertY;
+  }
+
+  if (c.type === 'region') {
+    c.runtime.role = c.runtime.role || 'gesture';
+    c.runtime.gestures = c.runtime.gestures || {
+      tap: { binding: 'Space' },
+      swipeLeft: { binding: 'KeyA' },
+      swipeRight: { binding: 'KeyD' },
+      longPress: { binding: 'KeyE' }
+    };
+  }
+
+  c.runtime.multiTouch = c.runtime.multiTouch ?? true;
+  c.runtime.touchIdPolicy = c.runtime.touchIdPolicy || 'lockUntilRelease';
+  c.runtime.z = c.z ?? c.runtime.z ?? 0;
+}
+
+function defaultControllerButton(type, label) {
+  if (type === 'shoulder') return String(label || 'L1').includes('R') ? 'RB' : 'LB';
+  return label || 'A';
+}
+function splitBindingList(v) {
+  if (Array.isArray(v)) return v;
+  return String(v || '').split(/[+,]/).map(x => x.trim()).filter(Boolean);
+}
+function setRuntimePath(obj, path, value) {
+  const parts = path.split('.');
+  let cur = obj;
+  for (let i = 0; i < parts.length - 1; i++) {
+    cur[parts[i]] = cur[parts[i]] || {};
+    cur = cur[parts[i]];
+  }
+  cur[parts[parts.length - 1]] = value;
+}
+function getRuntimePath(obj, path, fallback = '') {
+  const parts = path.split('.');
+  let cur = obj;
+  for (const k of parts) {
+    if (cur == null || cur[k] === undefined) return fallback;
+    cur = cur[k];
+  }
+  return Array.isArray(cur) ? cur.join(',') : cur;
+}
+function addRuntimeTextField(wrap, label, c, path, placeholder = '') {
+  wrap.appendChild(makeTextField(label, getRuntimePath(c.runtime, path, ''), v => {
+    if (path === 'binding.keys' || path === 'binding.buttons') setRuntimePath(c.runtime, path, splitBindingList(v));
+    else if (path === 'range') setRuntimePath(c.runtime, path, String(v).split(',').map(x => parseFloat(x.trim())).filter(n => Number.isFinite(n)));
+    else setRuntimePath(c.runtime, path, v);
+  }, placeholder, bindingListFor(c, path)));
+}
+function addRuntimeSelectField(wrap, label, c, path, options, rerender = false) {
+  wrap.appendChild(makeSelectField(label, getRuntimePath(c.runtime, path, options[0][0]), options, v => { setRuntimePath(c.runtime, path, v); if (rerender) renderAll(); }));
+}
+
+function renderRuntimeInspectorFields(wrap, c) {
+  normalizeComponentRuntime(c);
+  wrap.appendChild(el('div', { class: 'section-title', style: 'margin-top:18px;' }, 'Runtime binding'));
+  wrap.appendChild(el('div', { style: 'font-size:10px; color:var(--text-mute); margin:-6px 0 10px; line-height:1.45;' }, '자동완성 기준: KeyboardEvent.code / W3C Standard Gamepad aliases + Button0~16, Axis0~3 / MouseEvent.button 0~4 + buttons bitmask'));
+
+  if (['button','key','combo','shoulder'].includes(c.type)) {
+    addRuntimeSelectField(wrap, 'Press behavior', c, 'behavior', [['hold','Hold while touched'],['tap','Tap once'],['toggle','Toggle']]);
+    if (c.inputType === 'keyboard') {
+      if (c.type === 'combo') addRuntimeTextField(wrap, 'Combo keys', c, 'binding.keys', 'ControlLeft, KeyC');
+      else addRuntimeTextField(wrap, 'Key', c, 'binding.key', 'Space, KeyW, Enter');
+    } else if (c.inputType === 'mouse') {
+      if (c.type === 'combo') addRuntimeTextField(wrap, 'Mouse buttons', c, 'binding.buttons', 'MouseLeft, MouseRight');
+      else addRuntimeTextField(wrap, 'Mouse button', c, 'binding.button', 'MouseLeft, MouseRight, MouseMiddle');
+    } else {
+      addRuntimeTextField(wrap, 'Controller button', c, 'binding.button', 'A, B, X, Y, LB, RB');
+    }
+  }
+
+  if (c.type === 'dpad') {
+    addRuntimeSelectField(wrap, 'D-Pad mode', c, 'mode', [['4way','4-way'],['8way','8-way']], true);
+    ['up','down','left','right'].forEach(dir => addRuntimeTextField(wrap, dir.toUpperCase(), c, 'bindings.' + dir, c.inputType === 'keyboard' ? 'KeyW' : 'DPadUp'));
+    if (c.runtime.mode === '8way') ['upLeft','upRight','downLeft','downRight'].forEach(dir => addRuntimeTextField(wrap, dir, c, 'bindings.' + dir, 'KeyW+KeyA'));
+  }
+
+  if (c.type === 'stick') {
+    addRuntimeSelectField(wrap, 'Stick mode', c, 'mode', c.inputType === 'keyboard' ? [['digital4way','Digital 4-way'],['digital8way','Digital 8-way']] : [['analog','Analog axes']]);
+    if (c.inputType === 'keyboard') {
+      ['up','down','left','right'].forEach(dir => addRuntimeTextField(wrap, dir.toUpperCase(), c, 'bindings.' + dir, dir === 'up' ? 'KeyW' : ''));
+    } else {
+      addRuntimeTextField(wrap, 'Axis X', c, 'binding.axisX', 'LeftStickX');
+      addRuntimeTextField(wrap, 'Axis Y', c, 'binding.axisY', 'LeftStickY');
+      addRuntimeTextField(wrap, 'Range', c, 'range', '-1,1');
+    }
+    wrap.appendChild(makeTextField('Deadzone (0-1)', c.deadzone ?? '0.15', v => { c.deadzone = parseFloat(v) || 0; c.runtime.deadzone = c.deadzone; }));
+    wrap.appendChild(el('label', { class: 'checkbox' }, [
+      el('input', { type: 'checkbox', ...(c.fixed ? {} : { checked: 'checked' }), onchange: e => { c.fixed = !e.target.checked; c.runtime.fixed = c.fixed; } }),
+      'Floating (origin follows touch)'
+    ]));
+  }
+
+  if (c.type === 'trigger') {
+    if (c.inputType === 'keyboard') {
+      addRuntimeTextField(wrap, 'Key', c, 'binding.key', 'ShiftLeft');
+    } else if (c.inputType === 'mouse') {
+      addRuntimeTextField(wrap, 'Mouse button', c, 'binding.button', 'MouseRight');
+    } else {
+      addRuntimeTextField(wrap, 'Axis', c, 'binding.axis', 'LT or RT');
+      wrap.appendChild(el('label', { class: 'checkbox' }, [
+        el('input', { type: 'checkbox', ...(c.analog !== false ? { checked: 'checked' } : {}), onchange: e => { c.analog = e.target.checked; c.runtime.analog = c.analog; } }),
+        'Analog (pressure-sensitive)'
+      ]));
+      addRuntimeTextField(wrap, 'Range', c, 'range', '0,1');
+    }
+  }
+
+  if (c.type === 'touchpad') {
+    addRuntimeSelectField(wrap, 'Mode', c, 'mode', [['relative','Relative mouse'],['absolute','Absolute touch']]);
+    Object.keys(c.runtime.binding || {}).forEach(k => addRuntimeTextField(wrap, k, c, 'binding.' + k, k));
+    wrap.appendChild(makeTextField('Sensitivity', c.runtime.sensitivity ?? 1, v => { c.runtime.sensitivity = parseFloat(v) || 1; }));
+    wrap.appendChild(el('label', { class: 'checkbox' }, [
+      el('input', { type: 'checkbox', ...(c.runtime.invertY ? { checked: 'checked' } : {}), onchange: e => { c.runtime.invertY = e.target.checked; } }),
+      'Invert Y'
+    ]));
+  }
+
+  if (c.type === 'region') {
+    addRuntimeSelectField(wrap, 'Region role', c, 'role', [['gesture','Gesture region'],['touchpad','Touchpad region'],['mouseFilter','Mouse filter']], true);
+    if (c.runtime.role === 'mouseFilter') {
+      addRuntimeSelectField(wrap, 'Mouse behavior', c, 'behavior', [['ignore','Ignore mouse'],['allow','Allow mouse']]);
+    } else {
+      ['tap','swipeLeft','swipeRight','longPress'].forEach(g => addRuntimeTextField(wrap, g, c, 'gestures.' + g + '.binding', 'Key / button'));
+    }
+  }
+
+  wrap.appendChild(el('div', { class: 'section-title', style: 'margin-top:18px;' }, 'Runtime policy'));
+  wrap.appendChild(el('label', { class: 'checkbox' }, [
+    el('input', { type: 'checkbox', ...(c.runtime.multiTouch ? { checked: 'checked' } : {}), onchange: e => { c.runtime.multiTouch = e.target.checked; } }),
+    'Allow multi-touch'
+  ]));
+  addRuntimeSelectField(wrap, 'Touch ID policy', c, 'touchIdPolicy', [['lockUntilRelease','Lock until release'],['shared','Shared'],['latestWins','Latest touch wins']]);
+  wrap.appendChild(makeTextField('Z index', c.runtime.z ?? 0, v => { c.runtime.z = parseInt(v) || 0; c.z = c.runtime.z; renderComponents(); }));
+}
+
+/* ---------- Inspector helpers ---------- */
+function makeTextField(label, val, onchange, placeholder = '', listId = '') {
+  const f = el('div', { class: 'field' }, [el('label', { class: 'field-label' }, label)]);
+  const attrs = {
+    type: 'text', class: 'input-text', value: val, placeholder,
+    onchange: e => onchange(e.target.value),
+    oninput: e => onchange(e.target.value)
+  };
+  if (listId) attrs.list = listId;
+  const inp = el('input', attrs);
+  f.appendChild(inp);
+  return f;
+}
+function makeSelectField(label, val, options, onchange) {
+  const f = el('div', { class: 'field' }, [el('label', { class: 'field-label' }, label)]);
+  const sel = el('select', { class: 'input-select', onchange: e => onchange(e.target.value) });
+  options.forEach(([v, l]) => {
+    const opt = el('option', { value: v }, l);
+    if (v === val) opt.setAttribute('selected', '');
+    sel.appendChild(opt);
+  });
+  f.appendChild(sel);
+  return f;
+}
+function makeNumGrid(items) {
+  const grid = el('div', { style: 'display:grid; grid-template-columns:1fr 1fr; gap:6px;' });
+  items.forEach(it => {
+    const wrap = el('div');
+    wrap.appendChild(el('div', { style: 'font-size:10px; color:var(--text-mute); margin-bottom:2px;' }, it.label));
+    wrap.appendChild(el('input', {
+      type: 'number', class: 'input-num', value: it.val,
+      onchange: e => it.on(parseFloat(e.target.value) || 0),
+      oninput: e => it.on(parseFloat(e.target.value) || 0)
+    }));
+    grid.appendChild(wrap);
+  });
+  return grid;
+}
+
+/* ---------- Component CRUD ---------- */
+function addComponent(type, x, y) {
+  const def = COMPONENT_TYPES[type];
+  if (!def) return;
+  const r = getActiveRes();
+  const c = {
+    id: newId('c'),
+    type,
+    label: def.defaultLabel,
+    inputType: def.inputType,
+    binding: '',
+    x: Math.round(x - def.defaultSize.w / 2),
+    y: Math.round(y - def.defaultSize.h / 2),
+    w: def.defaultSize.w,
+    h: def.defaultSize.h,
+    shape: def.shape,
+    color: '',
+    bg: '',
+    mouseIgnore: type === 'touchpad' ? false : (def.inputType === 'controller' && type !== 'region'),
+    locked: false
+  };
+  if (type === 'touchpad') { c.inputType = 'mouse'; }
+  if (type === 'stick') { c.deadzone = 0.15; c.fixed = true; }
+  if (type === 'trigger') { c.analog = c.inputType !== 'keyboard'; }
+  normalizeComponentRuntime(c, true);
+  r.components.push(c);
+  state.selectedIds = [c.id];
+  renderAll();
+}
+
+function addMouseRegion(x, y) {
+  const r = getActiveRes();
+  const mr = {
+    id: newId('mr'),
+    name: 'Mouse Region',
+    behavior: 'ignore',
+    x: Math.round(x - 100), y: Math.round(y - 100),
+    w: 200, h: 200
+  };
+  r.mouseRegions.push(mr);
+  state.selectedIds = [mr.id];
+  renderAll();
+}
+
+function deleteSelected() {
+  const r = getActiveRes();
+  r.components = r.components.filter(c => !state.selectedIds.includes(c.id));
+  r.mouseRegions = r.mouseRegions.filter(m => !state.selectedIds.includes(m.id));
+  state.selectedIds = [];
+  renderAll();
+}
+function duplicateSelected() {
+  const r = getActiveRes();
+  const newSel = [];
+  state.selectedIds.forEach(id => {
+    const c = r.components.find(x => x.id === id);
+    if (c) {
+      const copy = { ...JSON.parse(JSON.stringify(c)), id: newId('c'), x: c.x + 24, y: c.y + 24 };
+      r.components.push(copy);
+      newSel.push(copy.id);
+    }
+    const mr = r.mouseRegions.find(x => x.id === id);
+    if (mr) {
+      const copy = { ...JSON.parse(JSON.stringify(mr)), id: newId('mr'), x: mr.x + 24, y: mr.y + 24 };
+      r.mouseRegions.push(copy);
+      newSel.push(copy.id);
+    }
+  });
+  state.selectedIds = newSel;
+  renderAll();
+}
+
+/* ---------- Lightweight DOM updates during pointer interactions ---------- */
+function refreshSelectionVisuals() {
+  $$('#canvas-overlay .gp-component, #canvas-overlay .mouse-region').forEach(node => {
+    node.classList.toggle('selected', state.selectedIds.includes(node.dataset.id));
+  });
+  renderInspector();
+}
+
+function updateCanvasNodePositions() {
+  const z = state.zoom;
+  const comps = getActiveComponents();
+  const regions = getActiveMouseRegions();
+
+  $$('#canvas-overlay .gp-component, #canvas-overlay .mouse-region').forEach(node => {
+    const id = node.dataset.id;
+    const o = comps.find(x => x.id === id) || regions.find(x => x.id === id);
+    if (!o) return;
+
+    node.style.left = (o.x * z) + 'px';
+    node.style.top = (o.y * z) + 'px';
+    node.style.width = (o.w * z) + 'px';
+    node.style.height = (o.h * z) + 'px';
+
+    if (node.classList.contains('gp-component')) {
+      node.style.fontSize = Math.max(10, Math.min(o.w, o.h) * z * 0.22) + 'px';
+    }
+  });
+}
+
+function updateSelectionFromPointer(id, additive) {
+  if (additive) {
+    if (state.selectedIds.includes(id)) {
+      state.selectedIds = state.selectedIds.filter(x => x !== id);
+    } else {
+      state.selectedIds = [...state.selectedIds, id];
+    }
+  } else if (!state.selectedIds.includes(id)) {
+    state.selectedIds = [id];
+  }
+}
+
+/* ---------- interact.js drag/resize with snapping ---------- */
+function setupInteractions() {
+  // unbind from old elements automatically since they're recreated
+  const overlay = $('#canvas-overlay');
+  const items = overlay.querySelectorAll('.gp-component, .mouse-region');
+
+  items.forEach(node => {
+    const id = node.dataset.id;
+    const isRegion = node.dataset.kind === 'mouseRegion';
+    const obj = isRegion
+      ? getActiveMouseRegions().find(x => x.id === id)
+      : getActiveComponents().find(x => x.id === id);
+    if (!obj || obj.locked) return;
+
+    interact(node).draggable({
+      listeners: {
+        start(event) {
+          // Do not call renderAll() here. Re-rendering removes the DOM node
+          // that interact.js is currently dragging, which cancels movement.
+          if (!state.selectedIds.includes(id)) {
+            state.selectedIds = event.shiftKey ? [...state.selectedIds, id] : [id];
+            refreshSelectionVisuals();
+          }
+          beginDragSession(id);
+          document.body.classList.add('dragging-active');
+        },
+        move(event) {
+          // Move from the drag-start positions, then snap in real time.
+          // This prevents grid snapping from eating small pointer deltas.
+          const dx = event.dx / state.zoom;
+          const dy = event.dy / state.zoom;
+          moveSelectedDuringDrag(id, dx, dy);
+          // Update styles in-place so the active drag node is not destroyed.
+          updateCanvasNodePositions();
+          // show snap guides for the primary item after the live snap correction
+          updateSnapGuidesFor(id);
+          renderSnapGuides();
+        },
+        end() {
+          // final snap as a safety pass, then recreate handles/inspector
+          finalSnapForSelection();
+          dragSession = null;
+          state.dragGuides = { x: null, y: null };
+          renderComponents();
+          renderSnapGuides();
+          renderInspector();
+          document.body.classList.remove('dragging-active');
+        }
+      }
+    }).resizable({
+      edges: { left: '.resize-handle.nw, .resize-handle.sw', right: '.resize-handle.ne, .resize-handle.se',
+               top: '.resize-handle.nw, .resize-handle.ne', bottom: '.resize-handle.sw, .resize-handle.se' },
+      listeners: {
+        start() { document.body.classList.add('dragging-active'); },
+        move(event) {
+          const o = isRegion
+            ? getActiveMouseRegions().find(x => x.id === id)
+            : getActiveComponents().find(x => x.id === id);
+          if (!o) return;
+          o.w = Math.max(10, o.w + event.deltaRect.width / state.zoom);
+          o.h = Math.max(10, o.h + event.deltaRect.height / state.zoom);
+          o.x = o.x + event.deltaRect.left / state.zoom;
+          o.y = o.y + event.deltaRect.top / state.zoom;
+          // Keep the active resize node alive while resizing.
+          updateCanvasNodePositions();
+        },
+        end() {
+          // snap size to grid optionally
+          if (state.snap.grid) {
+            const o = isRegion
+              ? getActiveMouseRegions().find(x => x.id === id)
+              : getActiveComponents().find(x => x.id === id);
+            if (o) {
+              const g = state.snap.gridSize;
+              o.x = Math.round(o.x / g) * g;
+              o.y = Math.round(o.y / g) * g;
+              o.w = Math.round(o.w / g) * g;
+              o.h = Math.round(o.h / g) * g;
+              renderComponents();
+              renderInspector();
+            }
+          }
+          document.body.classList.remove('dragging-active');
+        }
+      }
+    });
+  });
+}
+
+function getEditableObjectById(id) {
+  const c = getActiveComponents().find(x => x.id === id);
+  if (c) return c.locked ? null : c;
+  return getActiveMouseRegions().find(x => x.id === id) || null;
+}
+
+function getSelectedEditableObjects() {
+  return state.selectedIds
+    .map(id => getEditableObjectById(id))
+    .filter(Boolean);
+}
+
+function beginDragSession(primaryId) {
+  const originals = new Map();
+  getSelectedEditableObjects().forEach(o => {
+    originals.set(o.id, { x: o.x, y: o.y });
+  });
+  dragSession = { primaryId, rawDx: 0, rawDy: 0, originals };
+}
+
+function moveSelectedDuringDrag(primaryId, dx, dy) {
+  if (!dragSession || dragSession.primaryId !== primaryId) {
+    beginDragSession(primaryId);
+  }
+
+  dragSession.rawDx += dx;
+  dragSession.rawDy += dy;
+
+  getSelectedEditableObjects().forEach(o => {
+    const start = dragSession.originals.get(o.id);
+    if (!start) return;
+    o.x = start.x + dragSession.rawDx;
+    o.y = start.y + dragSession.rawDy;
+  });
+
+  applyLiveSnapForSelection(primaryId);
+}
+
+function applyLiveSnapForSelection(primaryId) {
+  const primary = getEditableObjectById(primaryId);
+  if (!primary) return;
+
+  let targetX = primary.x;
+  let targetY = primary.y;
+
+  if (state.snap.grid) {
+    const g = Math.max(1, state.snap.gridSize || 1);
+    targetX = Math.round(targetX / g) * g;
+    targetY = Math.round(targetY / g) * g;
+  }
+
+  if (state.snap.elements) {
+    const guide = computeGuideTarget(primary);
+    if (guide.x !== null) targetX = guide.x;
+    if (guide.y !== null) targetY = guide.y;
+  }
+
+  const correctionX = targetX - primary.x;
+  const correctionY = targetY - primary.y;
+  if (correctionX === 0 && correctionY === 0) return;
+
+  getSelectedEditableObjects().forEach(o => {
+    o.x += correctionX;
+    o.y += correctionY;
+  });
+}
+
+function moveSelected(dx, dy) {
+  getSelectedEditableObjects().forEach(o => {
+    o.x += dx;
+    o.y += dy;
+  });
+}
+
+function finalSnapForSelection() {
+  const comps = getActiveComponents();
+  const regions = getActiveMouseRegions();
+  const targets = [...comps, ...regions].filter(x => state.selectedIds.includes(x.id));
+  targets.forEach(o => {
+    // Grid snap
+    if (state.snap.grid) {
+      const g = state.snap.gridSize;
+      o.x = Math.round(o.x / g) * g;
+      o.y = Math.round(o.y / g) * g;
+    }
+    // Element snap (handled via guides during move; final correction here)
+    if (state.snap.elements) {
+      const guide = computeGuideTarget(o);
+      if (guide.x !== null) o.x = guide.x;
+      if (guide.y !== null) o.y = guide.y;
+    }
+  });
+}
+
+const SNAP_THRESHOLD = 6; // canvas px
+function computeGuideTarget(obj) {
+  const result = { x: null, y: null };
+  const others = [...getActiveComponents(), ...getActiveMouseRegions()]
+    .filter(x => !state.selectedIds.includes(x.id));
+
+  const objLines = {
+    left: obj.x,
+    right: obj.x + obj.w,
+    cx: obj.x + obj.w / 2,
+    top: obj.y,
+    bottom: obj.y + obj.h,
+    cy: obj.y + obj.h / 2
+  };
+
+  for (const o of others) {
+    const v = [o.x, o.x + o.w, o.x + o.w / 2];
+    const h = [o.y, o.y + o.h, o.y + o.h / 2];
+
+    // x snapping
+    for (const tx of v) {
+      if (Math.abs(objLines.left - tx) < SNAP_THRESHOLD) { result.x = tx; break; }
+      if (Math.abs(objLines.right - tx) < SNAP_THRESHOLD) { result.x = tx - obj.w; break; }
+      if (Math.abs(objLines.cx - tx) < SNAP_THRESHOLD) { result.x = tx - obj.w / 2; break; }
+    }
+    // y snapping
+    for (const ty of h) {
+      if (Math.abs(objLines.top - ty) < SNAP_THRESHOLD) { result.y = ty; break; }
+      if (Math.abs(objLines.bottom - ty) < SNAP_THRESHOLD) { result.y = ty - obj.h; break; }
+      if (Math.abs(objLines.cy - ty) < SNAP_THRESHOLD) { result.y = ty - obj.h / 2; break; }
+    }
+  }
+  return result;
+}
+
+function updateSnapGuidesFor(id) {
+  if (!state.snap.elements) {
+    state.dragGuides = { x: null, y: null }; return;
+  }
+  const comps = getActiveComponents();
+  const regions = getActiveMouseRegions();
+  const obj = comps.find(x => x.id === id) || regions.find(x => x.id === id);
+  if (!obj) return;
+
+  const others = [...comps, ...regions].filter(x => !state.selectedIds.includes(x.id));
+  const objCx = obj.x + obj.w / 2;
+  const objCy = obj.y + obj.h / 2;
+  let bestX = null, bestY = null;
+  let bestDx = SNAP_THRESHOLD, bestDy = SNAP_THRESHOLD;
+
+  for (const o of others) {
+    const oV = [o.x, o.x + o.w, o.x + o.w / 2];
+    const oH = [o.y, o.y + o.h, o.y + o.h / 2];
+    [obj.x, obj.x + obj.w, objCx].forEach(p => {
+      oV.forEach(t => {
+        const d = Math.abs(p - t);
+        if (d < bestDx) { bestDx = d; bestX = t; }
+      });
+    });
+    [obj.y, obj.y + obj.h, objCy].forEach(p => {
+      oH.forEach(t => {
+        const d = Math.abs(p - t);
+        if (d < bestDy) { bestDy = d; bestY = t; }
+      });
+    });
+  }
+  state.dragGuides = { x: bestX, y: bestY };
+}
+
+function renderSnapGuides() {
+  const overlay = $('#canvas-overlay');
+  // remove old guides
+  overlay.querySelectorAll('.guide').forEach(g => g.remove());
+  if (state.dragGuides.x !== null) {
+    overlay.appendChild(el('div', {
+      class: 'guide v',
+      style: `left:${state.dragGuides.x * state.zoom}px;`
+    }));
+  }
+  if (state.dragGuides.y !== null) {
+    overlay.appendChild(el('div', {
+      class: 'guide h',
+      style: `top:${state.dragGuides.y * state.zoom}px;`
+    }));
+  }
+}
+
+/* ---------- Canvas (drop, click, marquee) ---------- */
+function bindCanvas() {
+  const wrap = $('#canvas-wrap');
+  const frame = $('#canvas-frame');
+
+  // drop from palette
+  frame.addEventListener('dragover', e => { e.preventDefault(); e.dataTransfer.dropEffect = 'copy'; });
+  frame.addEventListener('drop', e => {
+    e.preventDefault();
+    const type = e.dataTransfer.getData('text/component-type');
+    if (!type) return;
+    const rect = frame.getBoundingClientRect();
+    const x = (e.clientX - rect.left) / state.zoom;
+    const y = (e.clientY - rect.top) / state.zoom;
+    if (type === 'mouseRegion') {
+      addMouseRegion(x, y);
+    } else {
+      addComponent(type, x, y);
+    }
+  });
+
+  // click empty canvas to deselect
+  frame.addEventListener('mousedown', e => {
+    // Only if clicked directly on overlay/frame/bg
+    if (e.target === frame || e.target.id === 'canvas-overlay' || e.target.id === 'canvas-bg') {
+      state.selectedIds = [];
+      renderAll();
+      startMarquee(e);
+    }
+  });
+
+  // select on click / prepare selection for drag
+  $('#canvas-overlay').addEventListener('mousedown', e => {
+    const node = e.target.closest('.gp-component, .mouse-region');
+    if (!node) return;
+    if (e.target.classList.contains('resize-handle')) return;
+
+    // Prevent the frame mousedown handler from treating a component click as
+    // an empty-canvas marquee selection.
+    e.stopPropagation();
+
+    const id = node.dataset.id;
+    const downX = e.clientX;
+    const downY = e.clientY;
+
+    updateSelectionFromPointer(id, e.shiftKey);
+    refreshSelectionVisuals();
+
+    // A simple click should show resize handles, but doing a full render on
+    // mousedown breaks dragging. Therefore only re-render after mouseup when
+    // the pointer did not actually move.
+    const onUp = ev => {
+      document.removeEventListener('mouseup', onUp);
+      const moved = Math.hypot(ev.clientX - downX, ev.clientY - downY) > 3;
+      if (!moved) renderAll();
+    };
+    document.addEventListener('mouseup', onUp, { once: true });
+  });
+
+  // mouse position
+  frame.addEventListener('mousemove', e => {
+    const rect = frame.getBoundingClientRect();
+    const x = Math.round((e.clientX - rect.left) / state.zoom);
+    const y = Math.round((e.clientY - rect.top) / state.zoom);
+    $('#status-mouse').textContent = `x: ${x}, y: ${y}`;
+  });
+
+  // wheel zoom
+  wrap.addEventListener('wheel', e => {
+    if (e.ctrlKey || e.metaKey) {
+      e.preventDefault();
+      const dir = e.deltaY < 0 ? 1.1 : 1/1.1;
+      setZoom(state.zoom * dir);
+    }
+  }, { passive: false });
+}
+
+function startMarquee(e) {
+  const wrap = $('#canvas-wrap');
+  const frame = $('#canvas-frame');
+  const rect = frame.getBoundingClientRect();
+  const startX = e.clientX - rect.left;
+  const startY = e.clientY - rect.top;
+
+  const m = el('div', { class: 'marquee', style: `left:${startX}px;top:${startY}px;width:0;height:0;` });
+  $('#canvas-overlay').appendChild(m);
+
+  const onMove = ev => {
+    const cx = ev.clientX - rect.left;
+    const cy = ev.clientY - rect.top;
+    const x = Math.min(startX, cx), y = Math.min(startY, cy);
+    const w = Math.abs(cx - startX), h = Math.abs(cy - startY);
+    m.style.cssText = `left:${x}px;top:${y}px;width:${w}px;height:${h}px;position:absolute;`;
+  };
+  const onUp = ev => {
+    const cx = ev.clientX - rect.left;
+    const cy = ev.clientY - rect.top;
+    const x = Math.min(startX, cx) / state.zoom;
+    const y = Math.min(startY, cy) / state.zoom;
+    const w = Math.abs(cx - startX) / state.zoom;
+    const h = Math.abs(cy - startY) / state.zoom;
+    if (w > 4 || h > 4) {
+      const sel = [];
+      [...getActiveComponents(), ...getActiveMouseRegions()].forEach(o => {
+        if (o.x + o.w > x && o.x < x + w && o.y + o.h > y && o.y < y + h) {
+          sel.push(o.id);
+        }
+      });
+      state.selectedIds = sel;
+    }
+    m.remove();
+    document.removeEventListener('mousemove', onMove);
+    document.removeEventListener('mouseup', onUp);
+    renderAll();
+  };
+  document.addEventListener('mousemove', onMove);
+  document.addEventListener('mouseup', onUp);
+}
+
+/* ---------- Topbar bindings ---------- */
+function bindTopbar() {
+  $('#btn-new').onclick = () => {
+    if (!confirm('새로 시작하면 현재 작업이 사라집니다. 계속할까요?')) return;
+    state.meta = { name: '', description: '', version: SCHEMA_VERSION };
+    state.resolutions = [];
+    state.bgImage = null;
+    state.selectedIds = [];
+    addResolution(1920, 1080);
+    toast('새 레이아웃을 시작했습니다');
+  };
+
+  $('#btn-import').onclick = () => {
+    showImportExport(true);
+  };
+  $('#btn-export').onclick = () => {
+    showImportExport(false);
+  };
+
+  $('#btn-bg').onclick = () => $('#bg-input').click();
+  $('#bg-input').onchange = e => {
+    const file = e.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = ev => {
+      state.bgImage = ev.target.result;
+      $('#chk-show-bg').checked = true;
+      state.bgVisible = true;
+      renderCanvasFrame();
+      toast('배경 이미지가 로드되었습니다');
+    };
+    reader.readAsDataURL(file);
+  };
+  $('#btn-bg-clear').onclick = () => {
+    state.bgImage = null;
+    renderCanvasFrame();
+  };
+  $('#chk-show-bg').onchange = e => { state.bgVisible = e.target.checked; renderCanvasFrame(); };
+
+  $('#chk-snap-grid').onchange = e => { state.snap.grid = e.target.checked; };
+  $('#chk-snap-elem').onchange = e => { state.snap.elements = e.target.checked; };
+  $('#grid-size').onchange = e => { state.snap.gridSize = parseInt(e.target.value) || 10; };
+
+  $('#btn-zoom-in').onclick = () => setZoom(state.zoom * 1.2);
+  $('#btn-zoom-out').onclick = () => setZoom(state.zoom / 1.2);
+  $('#btn-zoom-fit').onclick = fitZoom;
+
+  $('#btn-add-res').onclick = openResModal;
+
+  $('#meta-name').oninput = e => { state.meta.name = e.target.value; };
+  $('#meta-desc').oninput = e => { state.meta.description = e.target.value; };
+}
+
+function setZoom(z) {
+  state.zoom = Math.max(0.1, Math.min(2, z));
+  renderCanvasFrame();
+  renderComponents();
+}
+function fitZoom() {
+  const r = getActiveRes();
+  if (!r) return;
+  const wrap = $('#canvas-wrap');
+  const pad = 60;
+  const z = Math.min(
+    (wrap.clientWidth - pad) / r.width,
+    (wrap.clientHeight - pad) / r.height
+  );
+  setZoom(z);
+}
+
+/* ---------- Modals ---------- */
+function bindModals() {
+  $('#modal-cancel').onclick = () => $('#modal').classList.remove('show');
+  $('#modal-copy').onclick = () => {
+    navigator.clipboard.writeText($('#modal-text').value).then(() => toast('클립보드에 복사됨'));
+  };
+  $('#modal-download').onclick = () => {
+    const blob = new Blob([$('#modal-text').value], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = (state.meta.name || 'gamepad') + '.json';
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+  $('#modal-confirm').onclick = () => {
+    try {
+      const data = JSON.parse($('#modal-text').value);
+      loadProject(data);
+      $('#modal').classList.remove('show');
+      toast('JSON을 불러왔습니다');
+    } catch (err) {
+      toast('JSON 파싱 오류: ' + err.message, 'error');
+    }
+  };
+  $('#file-input').onchange = e => {
+    const f = e.target.files[0];
+    if (!f) return;
+    const reader = new FileReader();
+    reader.onload = ev => {
+      $('#modal-text').value = ev.target.result;
+    };
+    reader.readAsText(f);
+  };
+
+  // Resolution modal
+  $('#res-cancel').onclick = () => $('#res-modal').classList.remove('show');
+  $('#res-add').onclick = () => {
+    const w = parseInt($('#new-w').value);
+    const h = parseInt($('#new-h').value);
+    const copyFrom = $('#copy-from').value || null;
+    if (!w || !h) { toast('해상도를 입력하세요', 'error'); return; }
+    if (state.resolutions.find(r => r.width === w && r.height === h)) {
+      toast('이미 존재하는 해상도입니다', 'error'); return;
+    }
+    addResolution(w, h, copyFrom);
+    $('#res-modal').classList.remove('show');
+    toast(`${w}×${h} 레이아웃 추가됨`);
+  };
+  $$('.res-preset').forEach(b => {
+    b.onclick = () => {
+      $('#new-w').value = b.dataset.w;
+      $('#new-h').value = b.dataset.h;
+    };
+  });
+}
+
+function openResModal() {
+  $('#new-w').value = '';
+  $('#new-h').value = '';
+  const sel = $('#copy-from');
+  sel.innerHTML = '<option value="">(empty)</option>';
+  state.resolutions.forEach(r => {
+    sel.appendChild(el('option', { value: r.id }, `Copy from ${r.width}×${r.height}`));
+  });
+  $('#res-modal').classList.add('show');
+}
+
+function showImportExport(isImport) {
+  $('#modal-title').textContent = isImport ? 'Import JSON' : 'Export JSON';
+  $('#modal-text').value = isImport ? '' : JSON.stringify(serializeProject(), null, 2);
+  $('#modal-confirm').style.display = isImport ? 'inline-flex' : 'none';
+  $('#modal-copy').style.display = isImport ? 'none' : 'inline-flex';
+  $('#modal-download').style.display = isImport ? 'none' : 'inline-flex';
+
+  // For import, also offer file picker
+  if (isImport) {
+    $('#modal-text').placeholder = 'JSON을 붙여넣거나 아래에서 파일을 선택하세요';
+    if (!$('#modal-load-file')) {
+      const btn = el('button', {
+        id: 'modal-load-file',
+        class: 'tb-btn',
+        onclick: () => $('#file-input').click()
+      }, 'Load File…');
+      $('.modal-actions').insertBefore(btn, $('#modal-cancel'));
+    }
+    $('#modal-load-file').style.display = 'inline-flex';
+  } else if ($('#modal-load-file')) {
+    $('#modal-load-file').style.display = 'none';
+  }
+  $('#modal').classList.add('show');
+}
+
+/* ---------- Serialize / Deserialize ---------- */
+function serializeProject() {
+  return {
+    version: SCHEMA_VERSION,
+    meta: { ...state.meta, version: SCHEMA_VERSION },
+    // Background image is editor-only and intentionally excluded from exported JSON.
+    resolutions: state.resolutions.map(r => ({
+      width: r.width,
+      height: r.height,
+      components: [
+        ...r.components.map(serializeComponent),
+        ...r.mouseRegions.map(serializeMouseRegionAsComponent)
+      ],
+      // Backward compatibility for older runtimes/editors that still read this array.
+      mouseRegions: r.mouseRegions.map(m => ({
+        id: m.id,
+        name: m.name || '',
+        behavior: m.behavior || 'ignore',
+        x: m.x, y: m.y, w: m.w, h: m.h,
+        rect: { x: m.x, y: m.y, w: m.w, h: m.h },
+        runtime: {
+          inputType: 'mouse',
+          role: 'mouseFilter',
+          behavior: m.behavior || 'ignore',
+          multiTouch: true,
+          touchIdPolicy: 'shared',
+          z: m.z || 0
+        },
+        style: { shape: 'region' },
+        editor: { locked: false }
+      }))
+    }))
+  };
+}
+
+function serializeComponent(c) {
+  normalizeComponentRuntime(c);
+  const typeMap = {
+    key: { type: 'button', subtype: 'key' },
+    combo: { type: 'button', subtype: 'combo' },
+    shoulder: { type: 'button', subtype: 'shoulder' }
+  };
+  const mapped = typeMap[c.type] || { type: c.type, subtype: c.subtype || 'normal' };
+  return {
+    id: c.id,
+    type: mapped.type,
+    originalType: c.type,
+    subtype: mapped.subtype,
+    label: c.label,
+    rect: { x: c.x, y: c.y, w: c.w, h: c.h },
+    style: {
+      shape: c.shape,
+      color: c.color || null,
+      bg: c.bg || null,
+      mouseIgnore: !!c.mouseIgnore
+    },
+    runtime: normalizeRuntimeForExport(c),
+    editor: {
+      locked: !!c.locked
+    },
+    // Legacy flat fields for compatibility.
+    inputType: c.inputType,
+    binding: c.binding || '',
+    x: c.x, y: c.y, w: c.w, h: c.h,
+    shape: c.shape,
+    color: c.color || null,
+    bg: c.bg || null,
+    mouseIgnore: !!c.mouseIgnore,
+    locked: !!c.locked
+  };
+}
+
+function normalizeRuntimeForExport(c) {
+  const rt = JSON.parse(JSON.stringify(c.runtime || {}));
+  if (c.type === 'stick') {
+    rt.deadzone = parseFloat(c.deadzone ?? rt.deadzone ?? 0.15);
+    rt.fixed = c.fixed !== false;
+  }
+  if (c.type === 'trigger') {
+    rt.analog = c.analog !== false && c.inputType !== 'keyboard';
+  }
+  if (typeof rt.range === 'string') {
+    rt.range = rt.range.split(',').map(x => parseFloat(x.trim())).filter(n => Number.isFinite(n));
+  }
+  if (rt.binding && Array.isArray(rt.binding.keys) === false && typeof rt.binding.keys === 'string') {
+    rt.binding.keys = splitBindingList(rt.binding.keys);
+  }
+  return rt;
+}
+
+function serializeMouseRegionAsComponent(m) {
+  return {
+    id: m.id,
+    type: 'region',
+    originalType: 'mouseRegion',
+    subtype: 'mouseFilter',
+    label: m.name || 'Mouse Region',
+    rect: { x: m.x, y: m.y, w: m.w, h: m.h },
+    style: { shape: 'region', color: null, bg: null, mouseIgnore: false },
+    runtime: {
+      inputType: 'mouse',
+      role: 'mouseFilter',
+      behavior: m.behavior || 'ignore',
+      multiTouch: true,
+      touchIdPolicy: 'shared',
+      z: m.z || 0
+    },
+    editor: { locked: false },
+    x: m.x, y: m.y, w: m.w, h: m.h
+  };
+}
+
+function loadProject(data) {
+  if (!data || !data.resolutions || !Array.isArray(data.resolutions)) {
+    throw new Error('해상도 정보가 없습니다');
+  }
+  state.meta = data.meta || { name: '', description: '', version: SCHEMA_VERSION };
+  // Background images are editor-only. Ignore legacy backgroundImage fields on import.
+  state.bgImage = null;
+  state.resolutions = data.resolutions.map(r => {
+    const res = {
+      id: newId('res'),
+      width: r.width,
+      height: r.height,
+      components: [],
+      mouseRegions: []
+    };
+    (r.components || []).forEach(raw => {
+      if (raw.originalType === 'mouseRegion' || raw.subtype === 'mouseFilter' || raw.runtime?.role === 'mouseFilter') {
+        res.mouseRegions.push(normalizeMouseRegionForImport(raw));
+      } else {
+        res.components.push(normalizeComponentForImport(raw));
+      }
+    });
+    (r.mouseRegions || []).forEach(raw => {
+      if (!res.mouseRegions.some(x => x.id === raw.id)) res.mouseRegions.push(normalizeMouseRegionForImport(raw));
+    });
+    return res;
+  });
+  state.activeResId = state.resolutions[0]?.id || null;
+  state.selectedIds = [];
+  renderAll();
+}
+
+function normalizeComponentForImport(raw) {
+  const rect = raw.rect || { x: raw.x ?? 0, y: raw.y ?? 0, w: raw.w ?? 80, h: raw.h ?? 80 };
+  const style = raw.style || {};
+  const originalType = raw.originalType || (raw.type === 'button' && raw.subtype && raw.subtype !== 'normal' ? raw.subtype : raw.type);
+  const type = COMPONENT_TYPES[originalType] ? originalType : (COMPONENT_TYPES[raw.type] ? raw.type : 'button');
+  const c = {
+    id: raw.id || newId('c'),
+    type,
+    subtype: raw.subtype || 'normal',
+    label: raw.label || COMPONENT_TYPES[type]?.defaultLabel || '',
+    inputType: raw.inputType || raw.runtime?.inputType || COMPONENT_TYPES[type]?.inputType || 'controller',
+    binding: raw.binding || '',
+    x: rect.x, y: rect.y, w: rect.w, h: rect.h,
+    shape: style.shape || raw.shape || COMPONENT_TYPES[type]?.shape || 'square',
+    color: style.color || raw.color || '',
+    bg: style.bg || raw.bg || '',
+    mouseIgnore: style.mouseIgnore ?? raw.mouseIgnore ?? false,
+    locked: raw.editor?.locked ?? raw.locked ?? false,
+    runtime: JSON.parse(JSON.stringify(raw.runtime || {})),
+    z: raw.runtime?.z || raw.z || 0
+  };
+  if (type === 'stick') { c.deadzone = raw.runtime?.deadzone ?? raw.deadzone ?? 0.15; c.fixed = raw.runtime?.fixed ?? raw.fixed ?? true; }
+  if (type === 'trigger') { c.analog = raw.runtime?.analog ?? raw.analog ?? true; }
+  normalizeComponentRuntime(c);
+  return c;
+}
+
+function normalizeMouseRegionForImport(raw) {
+  const rect = raw.rect || { x: raw.x ?? 0, y: raw.y ?? 0, w: raw.w ?? 200, h: raw.h ?? 200 };
+  return {
+    id: raw.id || newId('mr'),
+    name: raw.name || raw.label || 'Mouse Region',
+    behavior: raw.behavior || raw.runtime?.behavior || 'ignore',
+    x: rect.x, y: rect.y, w: rect.w, h: rect.h,
+    z: raw.runtime?.z || raw.z || 0
+  };
+}
+
+/* ---------- Alignment & distribution ---------- */
+function bindAlignButtons() {
+  const sel = () => {
+    const all = [...getActiveComponents(), ...getActiveMouseRegions()];
+    return all.filter(o => state.selectedIds.includes(o.id) && !o.locked);
+  };
+
+  $('#align-l').onclick = () => {
+    const items = sel(); if (items.length < 2) return;
+    const minX = Math.min(...items.map(i => i.x));
+    items.forEach(i => i.x = minX);
+    renderAll();
+  };
+  $('#align-r').onclick = () => {
+    const items = sel(); if (items.length < 2) return;
+    const maxR = Math.max(...items.map(i => i.x + i.w));
+    items.forEach(i => i.x = maxR - i.w);
+    renderAll();
+  };
+  $('#align-t').onclick = () => {
+    const items = sel(); if (items.length < 2) return;
+    const minY = Math.min(...items.map(i => i.y));
+    items.forEach(i => i.y = minY);
+    renderAll();
+  };
+  $('#align-b').onclick = () => {
+    const items = sel(); if (items.length < 2) return;
+    const maxB = Math.max(...items.map(i => i.y + i.h));
+    items.forEach(i => i.y = maxB - i.h);
+    renderAll();
+  };
+  $('#align-cx').onclick = () => {
+    const items = sel(); if (items.length < 2) return;
+    const cx = items.reduce((s, i) => s + i.x + i.w / 2, 0) / items.length;
+    items.forEach(i => i.x = Math.round(cx - i.w / 2));
+    renderAll();
+  };
+  $('#align-cy').onclick = () => {
+    const items = sel(); if (items.length < 2) return;
+    const cy = items.reduce((s, i) => s + i.y + i.h / 2, 0) / items.length;
+    items.forEach(i => i.y = Math.round(cy - i.h / 2));
+    renderAll();
+  };
+  $('#dist-h').onclick = () => {
+    const items = sel(); if (items.length < 3) return;
+    items.sort((a, b) => a.x - b.x);
+    const left = items[0].x;
+    const right = items[items.length - 1].x + items[items.length - 1].w;
+    const totalW = items.reduce((s, i) => s + i.w, 0);
+    const gap = (right - left - totalW) / (items.length - 1);
+    let cur = left;
+    items.forEach(i => { i.x = Math.round(cur); cur += i.w + gap; });
+    renderAll();
+  };
+  $('#dist-v').onclick = () => {
+    const items = sel(); if (items.length < 3) return;
+    items.sort((a, b) => a.y - b.y);
+    const top = items[0].y;
+    const bot = items[items.length - 1].y + items[items.length - 1].h;
+    const totalH = items.reduce((s, i) => s + i.h, 0);
+    const gap = (bot - top - totalH) / (items.length - 1);
+    let cur = top;
+    items.forEach(i => { i.y = Math.round(cur); cur += i.h + gap; });
+    renderAll();
+  };
+}
+
+/* ---------- Keyboard shortcuts ---------- */
+function bindKeyboard() {
+  document.addEventListener('keydown', e => {
+    if (['INPUT', 'TEXTAREA', 'SELECT'].includes(document.activeElement?.tagName)) return;
+    if (e.key === 'Delete' || e.key === 'Backspace') {
+      if (state.selectedIds.length) { e.preventDefault(); deleteSelected(); }
+    } else if ((e.ctrlKey || e.metaKey) && e.key === 'd') {
+      e.preventDefault(); duplicateSelected();
+    } else if ((e.ctrlKey || e.metaKey) && e.key === 'a') {
+      e.preventDefault();
+      state.selectedIds = [...getActiveComponents().map(c => c.id), ...getActiveMouseRegions().map(m => m.id)];
+      renderAll();
+    } else if (e.key === 'Escape') {
+      state.selectedIds = []; renderAll();
+    } else if (['ArrowLeft','ArrowRight','ArrowUp','ArrowDown'].includes(e.key) && state.selectedIds.length) {
+      e.preventDefault();
+      const step = e.shiftKey ? 10 : 1;
+      const dx = e.key === 'ArrowLeft' ? -step : e.key === 'ArrowRight' ? step : 0;
+      const dy = e.key === 'ArrowUp' ? -step : e.key === 'ArrowDown' ? step : 0;
+      moveSelected(dx, dy);
+      renderAll();
+    } else if (e.key === '+' || e.key === '=') {
+      if (e.ctrlKey || e.metaKey) { e.preventDefault(); setZoom(state.zoom * 1.2); }
+    } else if (e.key === '-') {
+      if (e.ctrlKey || e.metaKey) { e.preventDefault(); setZoom(state.zoom / 1.2); }
+    }
+  });
+}
+
+/* ---------- Boot ---------- */
+window.addEventListener('DOMContentLoaded', () => {
+  init();
+  setTimeout(fitZoom, 100);
+});
+</script>
+</body>
+</html>
