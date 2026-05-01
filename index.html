@@ -870,6 +870,14 @@ const COMPONENT_TYPES = {
     inputType: 'controller',
     description: '터치/마우스 트랙패드 영역'
   },
+  mouseScroll: {
+    label: 'Mouse Scroll',
+    defaultSize: { w: 120, h: 120 },
+    shape: 'pill',
+    defaultLabel: 'SCROLL ↕',
+    inputType: 'mouse',
+    description: '마우스 휠 스크롤 입력 영역 (상하/좌우 선택)'
+  },
   region: {
     label: 'Region',
     defaultSize: { w: 200, h: 200 },
@@ -898,6 +906,7 @@ const PALETTE_ICONS = {
   key: '<svg viewBox="0 0 40 40"><rect x="10" y="10" width="20" height="20" rx="3" fill="none" stroke="currentColor" stroke-width="2"/><text x="20" y="25" text-anchor="middle" font-size="11" fill="currentColor" font-family="monospace">K</text></svg>',
   combo: '<svg viewBox="0 0 40 40"><rect x="4" y="14" width="14" height="12" rx="2" fill="none" stroke="currentColor" stroke-width="1.5"/><rect x="22" y="14" width="14" height="12" rx="2" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M18 20h4" stroke="currentColor" stroke-width="1.5"/></svg>',
   touchpad: '<svg viewBox="0 0 40 40"><rect x="6" y="10" width="28" height="20" rx="3" fill="none" stroke="currentColor" stroke-width="2"/><circle cx="20" cy="20" r="2" fill="currentColor"/></svg>',
+  mouseScroll: '<svg viewBox="0 0 40 40"><rect x="13" y="6" width="14" height="28" rx="7" fill="none" stroke="currentColor" stroke-width="2"/><path d="M20 11v7M20 22v7M17 15l3 3 3-3M17 25l3-3 3 3" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>',
   region: '<svg viewBox="0 0 40 40"><rect x="6" y="6" width="28" height="28" rx="2" fill="none" stroke="currentColor" stroke-width="2" stroke-dasharray="3 3"/></svg>',
   mouseRegion: '<svg viewBox="0 0 40 40"><rect x="6" y="6" width="28" height="28" rx="2" fill="none" stroke="#ef4444" stroke-width="2" stroke-dasharray="3 3"/><path d="M14 14 L20 20 L14 22 L18 26" fill="none" stroke="#ef4444" stroke-width="1.5"/></svg>'
 };
@@ -946,7 +955,7 @@ const MOUSE_BUTTON_MASK_OPTIONS = [
 const MOUSE_CODE_OPTIONS = [
   ...MOUSE_BUTTON_OPTIONS,
   ...MOUSE_BUTTON_MASK_OPTIONS,
-  'MouseX','MouseY','MouseWheelX','MouseWheelY','MouseWheelUp','MouseWheelDown'
+  'MouseX','MouseY','MouseWheelX','MouseWheelY','MouseWheelUp','MouseWheelDown','MouseWheelLeft','MouseWheelRight'
 ];
 const TOUCH_CODE_OPTIONS = ['TouchX','TouchY','TouchPress','Touch0X','Touch0Y','Touch1X','Touch1Y'];
 
@@ -1295,9 +1304,11 @@ function renderInspector() {
 
   // Input target
   const clickCapableTypes = ['button','key','combo','shoulder','trigger'];
-  const inputOptions = (c.type === 'touchpad' || clickCapableTypes.includes(c.type))
-    ? [['controller','Controller'], ['keyboard','Keyboard'], ['mouse','Mouse']]
-    : [['controller','Controller'], ['keyboard','Keyboard']];
+  const inputOptions = c.type === 'mouseScroll'
+    ? [['mouse','Mouse']]
+    : ((c.type === 'touchpad' || clickCapableTypes.includes(c.type))
+      ? [['controller','Controller'], ['keyboard','Keyboard'], ['mouse','Mouse']]
+      : [['controller','Controller'], ['keyboard','Keyboard']]);
   wrap.appendChild(makeSelectField('Input target', c.inputType || c.runtime?.inputType || 'controller', inputOptions,
     v => { setComponentInputType(c, v); renderAll(); }));
 
@@ -1493,6 +1504,27 @@ function normalizeComponentRuntime(c, forceDefaults = false) {
     }
   }
 
+  if (c.type === 'mouseScroll') {
+    c.inputType = 'mouse';
+    c.runtime.inputType = 'mouse';
+    c.runtime.role = 'mouseScroll';
+    c.runtime.direction = c.runtime.direction || 'vertical';
+    if (!c.runtime.binding || forceDefaults) {
+      c.runtime.binding = {
+        vertical: 'MouseWheelY',
+        horizontal: 'MouseWheelX',
+        up: 'MouseWheelUp',
+        down: 'MouseWheelDown',
+        left: 'MouseWheelLeft',
+        right: 'MouseWheelRight'
+      };
+    }
+    c.runtime.step = Number.isFinite(parseFloat(c.runtime.step)) ? parseFloat(c.runtime.step) : 120;
+    c.runtime.sensitivity = Number.isFinite(parseFloat(c.runtime.sensitivity)) ? parseFloat(c.runtime.sensitivity) : 1.0;
+    c.runtime.invert = !!c.runtime.invert;
+    c.runtime.momentum = !!c.runtime.momentum;
+  }
+
   if (c.type === 'touchpad') {
     if (!['mouse','controller','keyboard'].includes(c.inputType)) c.inputType = 'mouse';
     c.runtime.inputType = c.inputType;
@@ -1613,6 +1645,36 @@ function renderRuntimeInspectorFields(wrap, c) {
     }
   }
 
+  if (c.type === 'mouseScroll') {
+    addRuntimeSelectField(wrap, 'Scroll direction', c, 'direction', [
+      ['vertical','Vertical only (상하)'],
+      ['horizontal','Horizontal only (좌우)'],
+      ['both','Both vertical + horizontal']
+    ], true);
+
+    if (c.runtime.direction === 'vertical' || c.runtime.direction === 'both') {
+      addRuntimeTextField(wrap, 'Vertical wheel', c, 'binding.vertical', 'MouseWheelY');
+      addRuntimeTextField(wrap, 'Wheel up', c, 'binding.up', 'MouseWheelUp');
+      addRuntimeTextField(wrap, 'Wheel down', c, 'binding.down', 'MouseWheelDown');
+    }
+    if (c.runtime.direction === 'horizontal' || c.runtime.direction === 'both') {
+      addRuntimeTextField(wrap, 'Horizontal wheel', c, 'binding.horizontal', 'MouseWheelX');
+      addRuntimeTextField(wrap, 'Wheel left', c, 'binding.left', 'MouseWheelLeft');
+      addRuntimeTextField(wrap, 'Wheel right', c, 'binding.right', 'MouseWheelRight');
+    }
+
+    wrap.appendChild(makeTextField('Scroll step / notch', c.runtime.step ?? 120, v => { c.runtime.step = parseFloat(v) || 120; }, '120'));
+    wrap.appendChild(makeTextField('Sensitivity', c.runtime.sensitivity ?? 1, v => { c.runtime.sensitivity = parseFloat(v) || 1; }, '1.0'));
+    wrap.appendChild(el('label', { class: 'checkbox' }, [
+      el('input', { type: 'checkbox', ...(c.runtime.invert ? { checked: 'checked' } : {}), onchange: e => { c.runtime.invert = e.target.checked; } }),
+      'Invert scroll direction'
+    ]));
+    wrap.appendChild(el('label', { class: 'checkbox' }, [
+      el('input', { type: 'checkbox', ...(c.runtime.momentum ? { checked: 'checked' } : {}), onchange: e => { c.runtime.momentum = e.target.checked; } }),
+      'Momentum / smooth scroll hint'
+    ]));
+  }
+
   if (c.type === 'touchpad') {
     addRuntimeSelectField(wrap, 'Mode', c, 'mode', [['relative','Relative mouse'],['absolute','Absolute touch']]);
     Object.keys(c.runtime.binding || {}).forEach(k => addRuntimeTextField(wrap, k, c, 'binding.' + k, k));
@@ -1702,6 +1764,7 @@ function addComponent(type, x, y) {
     locked: false
   };
   if (type === 'touchpad') { c.inputType = 'mouse'; }
+  if (type === 'mouseScroll') { c.inputType = 'mouse'; c.mouseIgnore = false; }
   if (type === 'stick') { c.deadzone = 0.15; c.fixed = true; }
   if (type === 'trigger') { c.analog = c.inputType !== 'keyboard'; }
   normalizeComponentRuntime(c, true);
@@ -2431,6 +2494,15 @@ function normalizeRuntimeForExport(c) {
   }
   if (rt.binding && Array.isArray(rt.binding.keys) === false && typeof rt.binding.keys === 'string') {
     rt.binding.keys = splitBindingList(rt.binding.keys);
+  }
+  if (c.type === 'mouseScroll') {
+    rt.inputType = 'mouse';
+    rt.role = 'mouseScroll';
+    rt.direction = rt.direction || 'vertical';
+    rt.step = parseFloat(rt.step ?? 120) || 120;
+    rt.sensitivity = parseFloat(rt.sensitivity ?? 1) || 1;
+    rt.invert = !!rt.invert;
+    rt.momentum = !!rt.momentum;
   }
   return rt;
 }
