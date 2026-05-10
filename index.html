@@ -1231,7 +1231,7 @@ function bindingListFor(c, path) {
 }
 
 /* ---------- State ---------- */
-const SCHEMA_VERSION = '1.2';
+const SCHEMA_VERSION = '1.3';
 
 const DISPLAY_TARGETS = {
   main: 'Main display',
@@ -1866,14 +1866,33 @@ function normalizeComponentRuntime(c, forceDefaults = false) {
   if (c.type === 'touchpad') {
     if (!['mouse','controller','keyboard'].includes(c.inputType)) c.inputType = 'mouse';
     c.runtime.inputType = c.inputType;
-    c.runtime.mode = c.runtime.mode || (c.inputType === 'mouse' ? 'relative' : 'absolute');
-    if (!c.runtime.binding || forceDefaults) {
-      c.runtime.binding = c.inputType === 'mouse'
-        ? { moveX:'MouseX', moveY:'MouseY', tap:'MouseLeft', twoFingerTap:'MouseRight', scrollY:'MouseWheelY' }
-        : { x:'TouchX', y:'TouchY', press:'TouchPress' };
+    const defaultMode = c.inputType === 'mouse' ? 'relative' : 'absolute';
+    if (c.inputType !== 'controller' && c.runtime.mode === 'analogStick') c.runtime.mode = defaultMode;
+    c.runtime.mode = c.runtime.mode || defaultMode;
+    if (c.inputType === 'controller' && !['absolute','analogStick'].includes(c.runtime.mode)) c.runtime.mode = defaultMode;
+    if (c.inputType === 'keyboard' && c.runtime.mode !== 'absolute') c.runtime.mode = 'absolute';
+    if (!c.runtime.binding || forceDefaults || !touchpadBindingMatchesMode(c.runtime.binding, c.inputType, c.runtime.mode)) {
+      c.runtime.binding = defaultTouchpadBinding(c.inputType, c.runtime.mode);
     }
-    c.runtime.sensitivity = c.runtime.sensitivity ?? 1.0;
+    c.runtime.sensitivity = Number.isFinite(parseFloat(c.runtime.sensitivity)) ? parseFloat(c.runtime.sensitivity) : 1.0;
     c.runtime.invertY = !!c.runtime.invertY;
+    if (c.inputType === 'controller' && c.runtime.mode === 'analogStick') {
+      c.runtime.role = 'analogStick';
+      c.runtime.range = parseNumberRange(c.runtime.range, [-1, 1]);
+      c.runtime.deadzone = Number.isFinite(parseFloat(c.runtime.deadzone)) ? parseFloat(c.runtime.deadzone) : 0.15;
+      c.runtime.maxDelta = Number.isFinite(parseFloat(c.runtime.maxDelta ?? c.runtime.radius)) ? parseFloat(c.runtime.maxDelta ?? c.runtime.radius) : 24;
+      delete c.runtime.radius;
+      delete c.runtime.origin;
+      delete c.runtime.recenterOnRelease;
+      delete c.runtime.zeroOnRelease;
+      delete c.runtime.clamp;
+    } else if (c.runtime.role === 'analogStick') {
+      delete c.runtime.role;
+      delete c.runtime.range;
+      delete c.runtime.deadzone;
+      delete c.runtime.maxDelta;
+      delete c.runtime.clamp;
+    }
   }
 
   if (c.type === 'region') {
@@ -1898,6 +1917,26 @@ function defaultControllerButton(type, label) {
 function splitBindingList(v) {
   if (Array.isArray(v)) return v;
   return String(v || '').split(/[+,]/).map(x => x.trim()).filter(Boolean);
+}
+function parseNumberRange(v, fallback = [-1, 1]) {
+  const arr = Array.isArray(v) ? v : String(v || '').split(',');
+  const parsed = arr.map(x => parseFloat(String(x).trim())).filter(n => Number.isFinite(n));
+  return parsed.length >= 2 ? parsed.slice(0, 2) : fallback;
+}
+function defaultTouchpadBinding(inputType, mode) {
+  if (inputType === 'mouse') {
+    return { moveX:'MouseX', moveY:'MouseY', tap:'MouseLeft', twoFingerTap:'MouseRight', scrollY:'MouseWheelY' };
+  }
+  if (inputType === 'controller' && mode === 'analogStick') {
+    return { axisX:'RightStickX', axisY:'RightStickY', press:'RightStickButton' };
+  }
+  return { x:'TouchX', y:'TouchY', press:'TouchPress' };
+}
+function touchpadBindingMatchesMode(binding, inputType, mode) {
+  if (!binding) return false;
+  if (inputType === 'mouse') return binding.moveX !== undefined && binding.moveY !== undefined;
+  if (inputType === 'controller' && mode === 'analogStick') return binding.axisX !== undefined && binding.axisY !== undefined;
+  return binding.x !== undefined && binding.y !== undefined;
 }
 function setRuntimePath(obj, path, value) {
   const parts = path.split('.');
@@ -2014,8 +2053,29 @@ function renderRuntimeInspectorFields(wrap, c) {
   }
 
   if (c.type === 'touchpad') {
-    addRuntimeSelectField(wrap, 'Mode', c, 'mode', [['relative','Relative mouse'],['absolute','Absolute touch']]);
-    Object.keys(c.runtime.binding || {}).forEach(k => addRuntimeTextField(wrap, k, c, 'binding.' + k, k));
+    const touchpadModes = c.inputType === 'controller'
+      ? [['absolute','Absolute touch'],['analogStick','Analog stick drag']]
+      : (c.inputType === 'mouse'
+        ? [['relative','Relative mouse'],['absolute','Absolute touch']]
+        : [['absolute','Absolute touch']]);
+    wrap.appendChild(makeSelectField('Mode', c.runtime.mode || touchpadModes[0][0], touchpadModes, v => {
+      c.runtime.mode = v;
+      c.runtime.binding = defaultTouchpadBinding(c.inputType, v);
+      normalizeComponentRuntime(c);
+      renderAll();
+    }));
+
+    if (c.inputType === 'controller' && c.runtime.mode === 'analogStick') {
+      addRuntimeTextField(wrap, 'Axis X', c, 'binding.axisX', 'RightStickX');
+      addRuntimeTextField(wrap, 'Axis Y', c, 'binding.axisY', 'RightStickY');
+      addRuntimeTextField(wrap, 'Stick press', c, 'binding.press', 'RightStickButton');
+      addRuntimeTextField(wrap, 'Range', c, 'range', '-1,1');
+      wrap.appendChild(makeTextField('Deadzone (0-1)', c.runtime.deadzone ?? '0.15', v => { c.runtime.deadzone = parseFloat(v) || 0; }, '0.15'));
+      wrap.appendChild(makeTextField('Max delta (px)', c.runtime.maxDelta ?? c.runtime.radius ?? 24, v => { c.runtime.maxDelta = Math.max(1, parseFloat(v) || 1); }, '24'));
+    } else {
+      Object.keys(c.runtime.binding || {}).forEach(k => addRuntimeTextField(wrap, k, c, 'binding.' + k, k));
+    }
+
     wrap.appendChild(makeTextField('Sensitivity', c.runtime.sensitivity ?? 1, v => { c.runtime.sensitivity = parseFloat(v) || 1; }));
     wrap.appendChild(el('label', { class: 'checkbox' }, [
       el('input', { type: 'checkbox', ...(c.runtime.invertY ? { checked: 'checked' } : {}), onchange: e => { c.runtime.invertY = e.target.checked; } }),
@@ -2892,6 +2952,23 @@ function normalizeRuntimeForExport(c) {
     rt.sensitivity = parseFloat(rt.sensitivity ?? 1) || 1;
     rt.invert = !!rt.invert;
     rt.momentum = !!rt.momentum;
+  }
+  if (c.type === 'touchpad' && c.inputType === 'controller' && rt.mode === 'analogStick') {
+    rt.inputType = 'controller';
+    rt.role = 'analogStick';
+    rt.range = parseNumberRange(rt.range, [-1, 1]);
+    rt.deadzone = Number.isFinite(parseFloat(rt.deadzone)) ? parseFloat(rt.deadzone) : 0.15;
+    rt.maxDelta = Number.isFinite(parseFloat(rt.maxDelta ?? rt.radius)) ? parseFloat(rt.maxDelta ?? rt.radius) : 24;
+    rt.sensitivity = Number.isFinite(parseFloat(rt.sensitivity)) ? parseFloat(rt.sensitivity) : 1;
+    rt.invertY = !!rt.invertY;
+    delete rt.radius;
+    delete rt.origin;
+    delete rt.recenterOnRelease;
+    delete rt.zeroOnRelease;
+    delete rt.clamp;
+    if (!touchpadBindingMatchesMode(rt.binding, 'controller', 'analogStick')) {
+      rt.binding = defaultTouchpadBinding('controller', 'analogStick');
+    }
   }
   return rt;
 }
