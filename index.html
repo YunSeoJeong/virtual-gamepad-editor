@@ -586,6 +586,20 @@ button, input, select, textarea { -webkit-tap-highlight-color: transparent; }
   touch-action: manipulation;
 }
 .res-preset:hover { border-color: var(--accent); }
+.res-tab-label {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  min-width: 0;
+}
+.res-tab-display {
+  font-size: 9px;
+  line-height: 1;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  opacity: 0.68;
+}
 
 .zoom-pill {
   display: flex; align-items: center; gap: 4px;
@@ -921,6 +935,7 @@ button, input, select, textarea { -webkit-tap-highlight-color: transparent; }
 
     <div class="section-title">Resolution Layouts</div>
     <div id="res-list" style="display: flex; flex-direction: column; gap: 5px;"></div>
+    <div id="res-settings" style="margin-top: 10px;"></div>
     <button class="tb-btn" id="btn-add-res" style="width: 100%; margin-top: 8px; justify-content: center;">+ Add resolution</button>
 
     <div class="section-title" style="margin-top: 18px;">Distribute</div>
@@ -991,6 +1006,13 @@ button, input, select, textarea { -webkit-tap-highlight-color: transparent; }
     <div class="field">
       <label class="field-label">Copy components from</label>
       <select id="copy-from" class="input-select"><option value="">(empty)</option></select>
+    </div>
+    <div class="field">
+      <label class="field-label">Display target</label>
+      <select id="new-display" class="input-select">
+        <option value="main">Main display</option>
+        <option value="sub">Sub display</option>
+      </select>
     </div>
     <div class="res-presets">
       <button class="res-preset" data-w="1920" data-h="1080">1920 × 1080</button>
@@ -1209,11 +1231,24 @@ function bindingListFor(c, path) {
 }
 
 /* ---------- State ---------- */
-const SCHEMA_VERSION = '1.1';
+const SCHEMA_VERSION = '1.2';
+
+const DISPLAY_TARGETS = {
+  main: 'Main display',
+  sub: 'Sub display'
+};
+
+function normalizeDisplayTarget(value) {
+  return value === 'sub' || value === 'secondary' ? 'sub' : 'main';
+}
+
+function displayTargetLabel(value) {
+  return DISPLAY_TARGETS[normalizeDisplayTarget(value)];
+}
 
 const state = {
   meta: { name: '', description: '', version: SCHEMA_VERSION },
-  resolutions: [],            // [{ id, width, height, components: [], mouseRegions: [] }]
+  resolutions: [],            // [{ id, display, width, height, components: [], mouseRegions: [] }]
   activeResId: null,
   selectedIds: [],            // selected component ids
   zoom: 0.5,
@@ -1360,10 +1395,11 @@ function placePendingPaletteAt(x, y) {
 }
 
 /* ---------- Resolution management ---------- */
-function addResolution(w, h, copyFromId = null) {
+function addResolution(w, h, display = 'main', copyFromId = null) {
   const id = newId('res');
   const newRes = {
     id,
+    display: normalizeDisplayTarget(display),
     width: w,
     height: h,
     components: [],
@@ -1430,7 +1466,10 @@ function renderResolutionTabs() {
       style: 'width: 100%; justify-content: space-between; padding: 6px 10px;',
       onclick: () => switchResolution(r.id)
     }, [
-      el('span', {}, `${r.width}×${r.height}`),
+      el('span', { class: 'res-tab-label' }, [
+        el('span', {}, `${r.width}×${r.height}`),
+        el('span', { class: 'res-tab-display' }, displayTargetLabel(r.display))
+      ]),
       el('span', {
         style: 'opacity: 0.6; cursor: pointer; padding: 0 4px;',
         title: '삭제',
@@ -1441,6 +1480,43 @@ function renderResolutionTabs() {
   });
 }
 
+function renderResolutionSettings() {
+  const wrap = $('#res-settings');
+  const r = getActiveRes();
+  if (!wrap) return;
+  wrap.innerHTML = '';
+  if (!r) return;
+
+  const current = normalizeDisplayTarget(r.display);
+  const select = el('select', {
+    class: 'input-select',
+    onchange: e => {
+      const next = normalizeDisplayTarget(e.target.value);
+      const exists = state.resolutions.some(other =>
+        other.id !== r.id &&
+        other.width === r.width &&
+        other.height === r.height &&
+        normalizeDisplayTarget(other.display) === next
+      );
+      if (exists) {
+        toast('같은 해상도의 해당 디스플레이 설정이 이미 있습니다', 'error');
+        e.target.value = current;
+        return;
+      }
+      r.display = next;
+      renderAll();
+    }
+  }, [
+    el('option', { value: 'main', ...(current === 'main' ? { selected: 'selected' } : {}) }, 'Main display'),
+    el('option', { value: 'sub', ...(current === 'sub' ? { selected: 'selected' } : {}) }, 'Sub display')
+  ]);
+
+  wrap.appendChild(el('div', { class: 'field', style: 'margin-bottom:0;' }, [
+    el('label', { class: 'field-label' }, 'Active display'),
+    select
+  ]));
+}
+
 /* ---------- Render: canvas frame ---------- */
 function renderCanvasFrame() {
   const r = getActiveRes();
@@ -1448,7 +1524,7 @@ function renderCanvasFrame() {
   if (!r) return;
   frame.style.width = (r.width * state.zoom) + 'px';
   frame.style.height = (r.height * state.zoom) + 'px';
-  $('#status-res').textContent = `${r.width} × ${r.height}`;
+  $('#status-res').textContent = `${displayTargetLabel(r.display)} · ${r.width} × ${r.height}`;
   $('#zoom-val').textContent = Math.round(state.zoom * 100) + '%';
 
   const bg = $('#canvas-bg');
@@ -1515,6 +1591,7 @@ function renderComponents() {
 
 function renderAll() {
   renderResolutionTabs();
+  renderResolutionSettings();
   renderCanvasFrame();
   renderComponents();
   renderInspector();
@@ -2659,14 +2736,15 @@ function bindModals() {
   $('#res-add').onclick = () => {
     const w = parseInt($('#new-w').value);
     const h = parseInt($('#new-h').value);
+    const display = normalizeDisplayTarget($('#new-display').value);
     const copyFrom = $('#copy-from').value || null;
     if (!w || !h) { toast('해상도를 입력하세요', 'error'); return; }
-    if (state.resolutions.find(r => r.width === w && r.height === h)) {
+    if (state.resolutions.find(r => r.width === w && r.height === h && normalizeDisplayTarget(r.display) === display)) {
       toast('이미 존재하는 해상도입니다', 'error'); return;
     }
-    addResolution(w, h, copyFrom);
+    addResolution(w, h, display, copyFrom);
     $('#res-modal').classList.remove('show');
-    toast(`${w}×${h} 레이아웃 추가됨`);
+    toast(`${displayTargetLabel(display)} ${w}×${h} 레이아웃 추가됨`);
   };
   $$('.res-preset').forEach(b => {
     b.onclick = () => {
@@ -2679,10 +2757,11 @@ function bindModals() {
 function openResModal() {
   $('#new-w').value = '';
   $('#new-h').value = '';
+  $('#new-display').value = 'main';
   const sel = $('#copy-from');
   sel.innerHTML = '<option value="">(empty)</option>';
   state.resolutions.forEach(r => {
-    sel.appendChild(el('option', { value: r.id }, `Copy from ${r.width}×${r.height}`));
+    sel.appendChild(el('option', { value: r.id }, `Copy from ${displayTargetLabel(r.display)} ${r.width}×${r.height}`));
   });
   $('#res-modal').classList.add('show');
 }
@@ -2719,6 +2798,12 @@ function serializeProject() {
     meta: { ...state.meta, version: SCHEMA_VERSION },
     // Background image is editor-only and intentionally excluded from exported JSON.
     resolutions: state.resolutions.map(r => ({
+      display: normalizeDisplayTarget(r.display),
+      displayTarget: normalizeDisplayTarget(r.display),
+      settings: {
+        display: normalizeDisplayTarget(r.display),
+        displayTarget: normalizeDisplayTarget(r.display)
+      },
       width: r.width,
       height: r.height,
       components: [
@@ -2843,6 +2928,7 @@ function loadProject(data) {
   state.resolutions = data.resolutions.map(r => {
     const res = {
       id: newId('res'),
+      display: normalizeDisplayTarget(r.display || r.displayTarget || r.settings?.display || r.settings?.displayTarget),
       width: r.width,
       height: r.height,
       components: [],
