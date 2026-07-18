@@ -961,6 +961,9 @@ button:disabled,
     min-height: 100%;
     overflow-x: hidden;
     overflow-y: auto;
+    overscroll-behavior-y: auto;
+    touch-action: pan-y pinch-zoom;
+    -webkit-overflow-scrolling: touch;
   }
 
   .app {
@@ -972,6 +975,7 @@ button:disabled,
     padding-right: env(safe-area-inset-right);
     padding-left: env(safe-area-inset-left);
     overflow: visible;
+    touch-action: pan-y pinch-zoom;
   }
 
   .topbar {
@@ -1071,7 +1075,8 @@ button:disabled,
     border-right: 0;
     border-top: 1px solid var(--border);
     padding: clamp(12px, 3vw, 20px) clamp(10px, 3vw, 18px);
-    overscroll-behavior: contain;
+    overscroll-behavior-y: auto;
+    touch-action: pan-y pinch-zoom;
     width: 100%;
     max-width: 100%;
     overflow-y: visible;
@@ -1084,7 +1089,8 @@ button:disabled,
     border-left: 0;
     border-top: 1px solid var(--border);
     padding: clamp(12px, 3vw, 20px) clamp(10px, 3vw, 18px);
-    overscroll-behavior: contain;
+    overscroll-behavior-y: auto;
+    touch-action: pan-y pinch-zoom;
     width: 100%;
     max-width: 100%;
     overflow-y: visible;
@@ -1717,6 +1723,11 @@ function init() {
 }
 
 /* ---------- Build palette ---------- */
+function supportsMousePaletteDrag() {
+  return window.matchMedia('(any-pointer: fine)').matches ||
+    !window.matchMedia('(any-pointer: coarse)').matches;
+}
+
 function buildPalette() {
   const palette = $('#palette');
   palette.innerHTML = '';
@@ -1728,13 +1739,22 @@ function buildPalette() {
       'aria-label': `${def.label}: ${def.description}`,
       'aria-pressed': 'false',
       dataset: { type },
-      draggable: 'true'
+      draggable: String(supportsMousePaletteDrag())
     }, [
       el('div', { class: 'palette-icon' }, []),
       def.label
     ]);
     item.querySelector('.palette-icon').innerHTML = PALETTE_ICONS[type] || '';
     item.addEventListener('click', () => setPendingPaletteType(type));
+    item.addEventListener('pointerdown', e => {
+      // Native HTML drag competes with touch scrolling on mobile. Keep it for
+      // the mouse path only; touch and pen use tap-to-place.
+      item.draggable = e.pointerType === 'mouse' && supportsMousePaletteDrag();
+    });
+    const restoreMouseDrag = () => { item.draggable = supportsMousePaletteDrag(); };
+    item.addEventListener('pointerup', restoreMouseDrag);
+    item.addEventListener('pointercancel', restoreMouseDrag);
+    item.addEventListener('mouseenter', restoreMouseDrag);
     item.addEventListener('dragstart', e => {
       clearPendingPalette();
       e.dataTransfer.effectAllowed = 'copy';
