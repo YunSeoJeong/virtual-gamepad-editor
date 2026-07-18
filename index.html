@@ -936,8 +936,9 @@ button:disabled,
   }
 
   .toolbar-actions { order: 3; }
-  .toolbar-background { order: 4; }
-  .toolbar-snap { order: 5; }
+  .toolbar-history { order: 4; }
+  .toolbar-background { order: 5; }
+  .toolbar-snap { order: 6; }
 
   .zoom-pill {
     order: 2;
@@ -1012,8 +1013,9 @@ button:disabled,
     order: 3;
     flex-basis: 100%;
   }
-  .toolbar-background { order: 4; }
-  .toolbar-snap { order: 5; }
+  .toolbar-history { order: 4; }
+  .toolbar-background { order: 5; }
+  .toolbar-snap { order: 6; }
   .toolbar-actions .tb-btn {
     flex: 1 1 0;
     justify-content: center;
@@ -1273,6 +1275,13 @@ button:disabled,
       <button type="button" class="tb-btn" id="btn-new" title="새 레이아웃">⊕ New</button>
       <button type="button" class="tb-btn" id="btn-import">↓ Import JSON</button>
       <button type="button" class="tb-btn primary" id="btn-export">↑ Export JSON</button>
+    </div>
+
+    <div class="tb-divider"></div>
+
+    <div class="toolbar-group toolbar-history" role="group" aria-label="Edit history">
+      <button type="button" class="tb-btn" id="btn-undo" title="되돌리기 (Ctrl/Command+Z)" disabled>↶ 되돌리기</button>
+      <button type="button" class="tb-btn" id="btn-redo" title="앞으로가기 (Ctrl/Command+Shift+Z 또는 Ctrl/Command+Y)" disabled>↷ 앞으로가기</button>
     </div>
 
     <div class="tb-divider"></div>
@@ -1690,6 +1699,169 @@ function toast(msg, type = 'ok') {
   toast._t = setTimeout(() => t.classList.remove('show'), 2200);
 }
 
+/* ---------- Edit history ---------- */
+const HISTORY_LIMIT = 100;
+const editHistory = {
+  ready: false,
+  undoStack: [],
+  redoStack: [],
+  pendingBefore: null,
+  commitTimer: null
+};
+
+function cloneHistoryData(value) {
+  return JSON.parse(JSON.stringify(value));
+}
+
+function captureHistorySnapshot() {
+  return {
+    data: cloneHistoryData({
+      meta: state.meta,
+      resolutions: state.resolutions,
+      bgVisible: state.bgVisible
+    }),
+    // Keep the immutable data URL by reference so normal edits do not copy a
+    // potentially large background image into every history entry.
+    bgImage: state.bgImage,
+    activeResId: state.activeResId,
+    selectedIds: [...state.selectedIds]
+  };
+}
+
+function historyContentMatches(a, b) {
+  return a.bgImage === b.bgImage && JSON.stringify(a.data) === JSON.stringify(b.data);
+}
+
+function updateHistoryButtons() {
+  const undoButton = $('#btn-undo');
+  const redoButton = $('#btn-redo');
+  if (undoButton) undoButton.disabled = editHistory.undoStack.length === 0;
+  if (redoButton) redoButton.disabled = editHistory.redoStack.length === 0;
+}
+
+function initializeEditHistory() {
+  editHistory.undoStack = [];
+  editHistory.redoStack = [];
+  editHistory.pendingBefore = null;
+  editHistory.ready = true;
+  updateHistoryButtons();
+}
+
+function beginHistoryGroup() {
+  if (!editHistory.ready || editHistory.pendingBefore) return;
+  clearTimeout(editHistory.commitTimer);
+  editHistory.pendingBefore = captureHistorySnapshot();
+}
+
+function commitHistoryGroup() {
+  clearTimeout(editHistory.commitTimer);
+  editHistory.commitTimer = null;
+  const before = editHistory.pendingBefore;
+  editHistory.pendingBefore = null;
+  if (!editHistory.ready || !before) return false;
+
+  const after = captureHistorySnapshot();
+  if (historyContentMatches(before, after)) return false;
+  editHistory.undoStack.push(before);
+  if (editHistory.undoStack.length > HISTORY_LIMIT) editHistory.undoStack.shift();
+  editHistory.redoStack = [];
+  updateHistoryButtons();
+  return true;
+}
+
+function scheduleHistoryCommit(delay = 300) {
+  clearTimeout(editHistory.commitTimer);
+  editHistory.commitTimer = setTimeout(commitHistoryGroup, delay);
+}
+
+function recordHistoryEdit(mutator) {
+  if (!editHistory.ready) return mutator();
+  const ownsGroup = !editHistory.pendingBefore;
+  if (ownsGroup) beginHistoryGroup();
+  try {
+    return mutator();
+  } finally {
+    if (ownsGroup) commitHistoryGroup();
+  }
+}
+
+function restoreHistorySnapshot(snapshot) {
+  const previousActiveId = state.activeResId;
+  const previousRes = getActiveRes();
+  const data = cloneHistoryData(snapshot.data);
+  state.meta = data.meta;
+  state.resolutions = data.resolutions;
+  state.bgImage = snapshot.bgImage;
+  state.bgVisible = data.bgVisible;
+
+  const snapshotActiveExists = state.resolutions.some(r => r.id === snapshot.activeResId);
+  state.activeResId = snapshotActiveExists ? snapshot.activeResId : (state.resolutions[0]?.id || null);
+  const active = getActiveRes();
+  const availableIds = new Set([...(active?.components || []), ...(active?.mouseRegions || [])].map(item => item.id));
+  state.selectedIds = snapshot.selectedIds.filter(id => availableIds.has(id));
+  state.dragGuides = { x: null, y: null };
+  state.pendingPaletteType = null;
+  dragSession = null;
+
+  const activeViewportChanged = previousActiveId !== state.activeResId ||
+    previousRes?.width !== active?.width || previousRes?.height !== active?.height;
+  if (activeViewportChanged) {
+    state.panX = 0;
+    state.panY = 0;
+    state.autoFit = true;
+  }
+
+  $('#chk-show-bg').checked = state.bgVisible;
+  updatePaletteArmedState();
+  renderAll();
+  if (activeViewportChanged) requestAnimationFrame(fitZoom);
+}
+
+function undoEdit() {
+  commitHistoryGroup();
+  const previous = editHistory.undoStack.pop();
+  if (!previous) return;
+  editHistory.redoStack.push(captureHistorySnapshot());
+  restoreHistorySnapshot(previous);
+  updateHistoryButtons();
+  toast('편집 내용을 되돌렸습니다');
+}
+
+function redoEdit() {
+  commitHistoryGroup();
+  const next = editHistory.redoStack.pop();
+  if (!next) return;
+  editHistory.undoStack.push(captureHistorySnapshot());
+  restoreHistorySnapshot(next);
+  updateHistoryButtons();
+  toast('편집 내용을 앞으로 이동했습니다');
+}
+
+function isHistoryTrackedControl(target) {
+  return target instanceof Element && target.matches('input, select, textarea') && (
+    target.matches('#meta-name, #meta-desc, #active-display') ||
+    !!target.closest('#inspector')
+  );
+}
+
+function bindHistoryControls() {
+  document.addEventListener('pointerdown', e => {
+    if (isHistoryTrackedControl(e.target)) beginHistoryGroup();
+  }, true);
+  document.addEventListener('focusin', e => {
+    if (isHistoryTrackedControl(e.target)) beginHistoryGroup();
+  });
+  document.addEventListener('keydown', e => {
+    if (isHistoryTrackedControl(e.target)) beginHistoryGroup();
+  }, true);
+  document.addEventListener('change', e => {
+    if (isHistoryTrackedControl(e.target)) commitHistoryGroup();
+  });
+  document.addEventListener('focusout', e => {
+    if (isHistoryTrackedControl(e.target)) commitHistoryGroup();
+  });
+}
+
 /* ---------- Active resolution helpers ---------- */
 function getActiveRes() {
   return state.resolutions.find(r => r.id === state.activeResId);
@@ -1707,6 +1879,7 @@ function getActiveMouseRegions() {
 function init() {
   buildBindingDatalists();
   buildPalette();
+  bindHistoryControls();
   bindTopbar();
   bindModals();
   bindViewportControls();
@@ -1720,6 +1893,7 @@ function init() {
   }
   renderAll();
   fitZoom();
+  initializeEditHistory();
 }
 
 /* ---------- Build palette ---------- */
@@ -1814,47 +1988,49 @@ function placePendingPaletteAt(x, y) {
 
 /* ---------- Resolution management ---------- */
 function addResolution(w, h, display = 'main', copyFromId = null) {
-  const id = newId('res');
-  const newRes = {
-    id,
-    display: normalizeDisplayTarget(display),
-    width: w,
-    height: h,
-    components: [],
-    mouseRegions: []
-  };
-  if (copyFromId) {
-    const src = state.resolutions.find(r => r.id === copyFromId);
-    if (src) {
-      // Scale components proportionally
-      const sx = w / src.width;
-      const sy = h / src.height;
-      newRes.components = src.components.map(c => ({
-        ...JSON.parse(JSON.stringify(c)),
-        id: newId('c'),
-        x: Math.round(c.x * sx),
-        y: Math.round(c.y * sy),
-        w: Math.round(c.w * sx),
-        h: Math.round(c.h * sy)
-      }));
-      newRes.mouseRegions = src.mouseRegions.map(r => ({
-        ...JSON.parse(JSON.stringify(r)),
-        id: newId('mr'),
-        x: Math.round(r.x * sx),
-        y: Math.round(r.y * sy),
-        w: Math.round(r.w * sx),
-        h: Math.round(r.h * sy)
-      }));
+  return recordHistoryEdit(() => {
+    const id = newId('res');
+    const newRes = {
+      id,
+      display: normalizeDisplayTarget(display),
+      width: w,
+      height: h,
+      components: [],
+      mouseRegions: []
+    };
+    if (copyFromId) {
+      const src = state.resolutions.find(r => r.id === copyFromId);
+      if (src) {
+        // Scale components proportionally
+        const sx = w / src.width;
+        const sy = h / src.height;
+        newRes.components = src.components.map(c => ({
+          ...JSON.parse(JSON.stringify(c)),
+          id: newId('c'),
+          x: Math.round(c.x * sx),
+          y: Math.round(c.y * sy),
+          w: Math.round(c.w * sx),
+          h: Math.round(c.h * sy)
+        }));
+        newRes.mouseRegions = src.mouseRegions.map(r => ({
+          ...JSON.parse(JSON.stringify(r)),
+          id: newId('mr'),
+          x: Math.round(r.x * sx),
+          y: Math.round(r.y * sy),
+          w: Math.round(r.w * sx),
+          h: Math.round(r.h * sy)
+        }));
+      }
     }
-  }
-  state.resolutions.push(newRes);
-  state.activeResId = id;
-  state.selectedIds = [];
-  state.panX = 0;
-  state.panY = 0;
-  state.autoFit = true;
-  renderAll();
-  requestAnimationFrame(fitZoom);
+    state.resolutions.push(newRes);
+    state.activeResId = id;
+    state.selectedIds = [];
+    state.panX = 0;
+    state.panY = 0;
+    state.autoFit = true;
+    renderAll();
+    requestAnimationFrame(fitZoom);
+  });
 }
 
 function removeResolution(id) {
@@ -1863,16 +2039,18 @@ function removeResolution(id) {
     return;
   }
   if (!confirm('이 해상도 레이아웃을 삭제하시겠습니까?')) return;
-  state.resolutions = state.resolutions.filter(r => r.id !== id);
-  if (state.activeResId === id) {
-    state.activeResId = state.resolutions[0].id;
-    state.selectedIds = [];
-    state.panX = 0;
-    state.panY = 0;
-    state.autoFit = true;
-  }
-  renderAll();
-  if (state.autoFit) requestAnimationFrame(fitZoom);
+  recordHistoryEdit(() => {
+    state.resolutions = state.resolutions.filter(r => r.id !== id);
+    if (state.activeResId === id) {
+      state.activeResId = state.resolutions[0].id;
+      state.selectedIds = [];
+      state.panX = 0;
+      state.panY = 0;
+      state.autoFit = true;
+    }
+    renderAll();
+    if (state.autoFit) requestAnimationFrame(fitZoom);
+  });
 }
 
 function switchResolution(id) {
@@ -2596,73 +2774,81 @@ function makeNumGrid(items) {
 function addComponent(type, x, y) {
   const def = COMPONENT_TYPES[type];
   if (!def) return;
-  const r = getActiveRes();
-  const c = {
-    id: newId('c'),
-    type,
-    label: def.defaultLabel,
-    inputType: def.inputType,
-    binding: '',
-    x: Math.round(x - def.defaultSize.w / 2),
-    y: Math.round(y - def.defaultSize.h / 2),
-    w: def.defaultSize.w,
-    h: def.defaultSize.h,
-    shape: def.shape,
-    color: '',
-    bg: '',
-    mouseIgnore: type === 'touchpad' ? false : (def.inputType === 'controller' && type !== 'region'),
-    locked: false
-  };
-  if (type === 'touchpad') { c.inputType = 'mouse'; }
-  if (type === 'mouseScroll') { c.inputType = 'mouse'; c.mouseIgnore = false; }
-  if (type === 'stick') { c.deadzone = 0.15; c.fixed = true; }
-  if (type === 'trigger') { c.analog = c.inputType !== 'keyboard'; }
-  normalizeComponentRuntime(c, true);
-  r.components.push(c);
-  state.selectedIds = [c.id];
-  renderAll();
+  return recordHistoryEdit(() => {
+    const r = getActiveRes();
+    const c = {
+      id: newId('c'),
+      type,
+      label: def.defaultLabel,
+      inputType: def.inputType,
+      binding: '',
+      x: Math.round(x - def.defaultSize.w / 2),
+      y: Math.round(y - def.defaultSize.h / 2),
+      w: def.defaultSize.w,
+      h: def.defaultSize.h,
+      shape: def.shape,
+      color: '',
+      bg: '',
+      mouseIgnore: type === 'touchpad' ? false : (def.inputType === 'controller' && type !== 'region'),
+      locked: false
+    };
+    if (type === 'touchpad') { c.inputType = 'mouse'; }
+    if (type === 'mouseScroll') { c.inputType = 'mouse'; c.mouseIgnore = false; }
+    if (type === 'stick') { c.deadzone = 0.15; c.fixed = true; }
+    if (type === 'trigger') { c.analog = c.inputType !== 'keyboard'; }
+    normalizeComponentRuntime(c, true);
+    r.components.push(c);
+    state.selectedIds = [c.id];
+    renderAll();
+  });
 }
 
 function addMouseRegion(x, y) {
-  const r = getActiveRes();
-  const mr = {
-    id: newId('mr'),
-    name: 'Mouse Region',
-    behavior: 'ignore',
-    x: Math.round(x - 100), y: Math.round(y - 100),
-    w: 200, h: 200
-  };
-  r.mouseRegions.push(mr);
-  state.selectedIds = [mr.id];
-  renderAll();
+  return recordHistoryEdit(() => {
+    const r = getActiveRes();
+    const mr = {
+      id: newId('mr'),
+      name: 'Mouse Region',
+      behavior: 'ignore',
+      x: Math.round(x - 100), y: Math.round(y - 100),
+      w: 200, h: 200
+    };
+    r.mouseRegions.push(mr);
+    state.selectedIds = [mr.id];
+    renderAll();
+  });
 }
 
 function deleteSelected() {
-  const r = getActiveRes();
-  r.components = r.components.filter(c => !state.selectedIds.includes(c.id));
-  r.mouseRegions = r.mouseRegions.filter(m => !state.selectedIds.includes(m.id));
-  state.selectedIds = [];
-  renderAll();
+  recordHistoryEdit(() => {
+    const r = getActiveRes();
+    r.components = r.components.filter(c => !state.selectedIds.includes(c.id));
+    r.mouseRegions = r.mouseRegions.filter(m => !state.selectedIds.includes(m.id));
+    state.selectedIds = [];
+    renderAll();
+  });
 }
 function duplicateSelected() {
-  const r = getActiveRes();
-  const newSel = [];
-  state.selectedIds.forEach(id => {
-    const c = r.components.find(x => x.id === id);
-    if (c) {
-      const copy = { ...JSON.parse(JSON.stringify(c)), id: newId('c'), x: c.x + 24, y: c.y + 24 };
-      r.components.push(copy);
-      newSel.push(copy.id);
-    }
-    const mr = r.mouseRegions.find(x => x.id === id);
-    if (mr) {
-      const copy = { ...JSON.parse(JSON.stringify(mr)), id: newId('mr'), x: mr.x + 24, y: mr.y + 24 };
-      r.mouseRegions.push(copy);
-      newSel.push(copy.id);
-    }
+  recordHistoryEdit(() => {
+    const r = getActiveRes();
+    const newSel = [];
+    state.selectedIds.forEach(id => {
+      const c = r.components.find(x => x.id === id);
+      if (c) {
+        const copy = { ...JSON.parse(JSON.stringify(c)), id: newId('c'), x: c.x + 24, y: c.y + 24 };
+        r.components.push(copy);
+        newSel.push(copy.id);
+      }
+      const mr = r.mouseRegions.find(x => x.id === id);
+      if (mr) {
+        const copy = { ...JSON.parse(JSON.stringify(mr)), id: newId('mr'), x: mr.x + 24, y: mr.y + 24 };
+        r.mouseRegions.push(copy);
+        newSel.push(copy.id);
+      }
+    });
+    state.selectedIds = newSel;
+    renderAll();
   });
-  state.selectedIds = newSel;
-  renderAll();
 }
 
 /* ---------- Lightweight DOM updates during pointer interactions ---------- */
@@ -3048,6 +3234,7 @@ function beginDirectPointerManipulation(e) {
 
     if (!manipulationStarted) {
       manipulationStarted = true;
+      beginHistoryGroup();
       document.body.classList.add('dragging-active');
       if (!handle) beginDragSession(id);
     }
@@ -3081,6 +3268,7 @@ function beginDirectPointerManipulation(e) {
     if (manipulationStarted && editable) {
       if (handle) finishDirectResize(editable);
       else finalSnapForSelection();
+      commitHistoryGroup();
     }
     dragSession = null;
     state.dragGuides = { x: null, y: null };
@@ -3346,13 +3534,20 @@ function startMarquee(e) {
 function bindTopbar() {
   $('#btn-new').onclick = () => {
     if (!confirm('새로 시작하면 현재 작업이 사라집니다. 계속할까요?')) return;
-    state.meta = { name: '', description: '', version: SCHEMA_VERSION };
-    state.resolutions = [];
-    state.bgImage = null;
-    state.selectedIds = [];
-    addResolution(1920, 1080);
+    recordHistoryEdit(() => {
+      state.meta = { name: '', description: '', version: SCHEMA_VERSION };
+      state.resolutions = [];
+      state.bgImage = null;
+      state.bgVisible = true;
+      $('#chk-show-bg').checked = true;
+      state.selectedIds = [];
+      addResolution(1920, 1080);
+    });
     toast('새 레이아웃을 시작했습니다');
   };
+
+  $('#btn-undo').onclick = undoEdit;
+  $('#btn-redo').onclick = redoEdit;
 
   $('#btn-import').onclick = () => {
     showImportExport(true);
@@ -3367,19 +3562,26 @@ function bindTopbar() {
     if (!file) return;
     const reader = new FileReader();
     reader.onload = ev => {
-      state.bgImage = ev.target.result;
-      $('#chk-show-bg').checked = true;
-      state.bgVisible = true;
-      renderCanvasFrame();
+      recordHistoryEdit(() => {
+        state.bgImage = ev.target.result;
+        $('#chk-show-bg').checked = true;
+        state.bgVisible = true;
+        renderCanvasFrame();
+      });
       toast('배경 이미지가 로드되었습니다');
     };
     reader.readAsDataURL(file);
   };
   $('#btn-bg-clear').onclick = () => {
-    state.bgImage = null;
-    renderCanvasFrame();
+    recordHistoryEdit(() => {
+      state.bgImage = null;
+      renderCanvasFrame();
+    });
   };
-  $('#chk-show-bg').onchange = e => { state.bgVisible = e.target.checked; renderCanvasFrame(); };
+  $('#chk-show-bg').onchange = e => recordHistoryEdit(() => {
+    state.bgVisible = e.target.checked;
+    renderCanvasFrame();
+  });
 
   $('#chk-snap-grid').onchange = e => { state.snap.grid = e.target.checked; };
   $('#chk-snap-elem').onchange = e => { state.snap.elements = e.target.checked; };
@@ -3787,7 +3989,8 @@ function serializeMouseRegionAsComponent(m) {
   };
 }
 
-function loadProject(data) {
+function loadProject(data, recordHistory = true) {
+  if (recordHistory) return recordHistoryEdit(() => loadProject(data, false));
   if (!data || !data.resolutions || !Array.isArray(data.resolutions)) {
     throw new Error('해상도 정보가 없습니다');
   }
@@ -3872,38 +4075,50 @@ function bindAlignButtons() {
   $('#align-l').onclick = () => {
     const items = sel(); if (items.length < 2) return;
     const minX = Math.min(...items.map(i => i.x));
-    items.forEach(i => i.x = minX);
-    renderAll();
+    recordHistoryEdit(() => {
+      items.forEach(i => i.x = minX);
+      renderAll();
+    });
   };
   $('#align-r').onclick = () => {
     const items = sel(); if (items.length < 2) return;
     const maxR = Math.max(...items.map(i => i.x + i.w));
-    items.forEach(i => i.x = maxR - i.w);
-    renderAll();
+    recordHistoryEdit(() => {
+      items.forEach(i => i.x = maxR - i.w);
+      renderAll();
+    });
   };
   $('#align-t').onclick = () => {
     const items = sel(); if (items.length < 2) return;
     const minY = Math.min(...items.map(i => i.y));
-    items.forEach(i => i.y = minY);
-    renderAll();
+    recordHistoryEdit(() => {
+      items.forEach(i => i.y = minY);
+      renderAll();
+    });
   };
   $('#align-b').onclick = () => {
     const items = sel(); if (items.length < 2) return;
     const maxB = Math.max(...items.map(i => i.y + i.h));
-    items.forEach(i => i.y = maxB - i.h);
-    renderAll();
+    recordHistoryEdit(() => {
+      items.forEach(i => i.y = maxB - i.h);
+      renderAll();
+    });
   };
   $('#align-cx').onclick = () => {
     const items = sel(); if (items.length < 2) return;
     const cx = items.reduce((s, i) => s + i.x + i.w / 2, 0) / items.length;
-    items.forEach(i => i.x = Math.round(cx - i.w / 2));
-    renderAll();
+    recordHistoryEdit(() => {
+      items.forEach(i => i.x = Math.round(cx - i.w / 2));
+      renderAll();
+    });
   };
   $('#align-cy').onclick = () => {
     const items = sel(); if (items.length < 2) return;
     const cy = items.reduce((s, i) => s + i.y + i.h / 2, 0) / items.length;
-    items.forEach(i => i.y = Math.round(cy - i.h / 2));
-    renderAll();
+    recordHistoryEdit(() => {
+      items.forEach(i => i.y = Math.round(cy - i.h / 2));
+      renderAll();
+    });
   };
   $('#dist-h').onclick = () => {
     const items = sel(); if (items.length < 3) return;
@@ -3913,8 +4128,10 @@ function bindAlignButtons() {
     const totalW = items.reduce((s, i) => s + i.w, 0);
     const gap = (right - left - totalW) / (items.length - 1);
     let cur = left;
-    items.forEach(i => { i.x = Math.round(cur); cur += i.w + gap; });
-    renderAll();
+    recordHistoryEdit(() => {
+      items.forEach(i => { i.x = Math.round(cur); cur += i.w + gap; });
+      renderAll();
+    });
   };
   $('#dist-v').onclick = () => {
     const items = sel(); if (items.length < 3) return;
@@ -3924,15 +4141,33 @@ function bindAlignButtons() {
     const totalH = items.reduce((s, i) => s + i.h, 0);
     const gap = (bot - top - totalH) / (items.length - 1);
     let cur = top;
-    items.forEach(i => { i.y = Math.round(cur); cur += i.h + gap; });
-    renderAll();
+    recordHistoryEdit(() => {
+      items.forEach(i => { i.y = Math.round(cur); cur += i.h + gap; });
+      renderAll();
+    });
   };
 }
 
 /* ---------- Keyboard shortcuts ---------- */
+let historyArrowNudgeActive = false;
+
 function bindKeyboard() {
   document.addEventListener('keydown', e => {
     if (getOpenModal()) return;
+    const commandKey = e.ctrlKey || e.metaKey;
+    const shortcutKey = String(e.key).toLowerCase();
+    if (commandKey && !e.altKey && shortcutKey === 'z') {
+      e.preventDefault();
+      if (e.shiftKey) redoEdit();
+      else undoEdit();
+      return;
+    }
+    if (commandKey && !e.altKey && shortcutKey === 'y') {
+      e.preventDefault();
+      redoEdit();
+      return;
+    }
+
     const active = document.activeElement;
     if (['INPUT', 'TEXTAREA', 'SELECT'].includes(active?.tagName) || active?.isContentEditable) return;
 
@@ -3972,8 +4207,11 @@ function bindKeyboard() {
       const step = e.shiftKey ? 10 : 1;
       const dx = e.key === 'ArrowLeft' ? -step : e.key === 'ArrowRight' ? step : 0;
       const dy = e.key === 'ArrowUp' ? -step : e.key === 'ArrowDown' ? step : 0;
+      beginHistoryGroup();
+      historyArrowNudgeActive = true;
       moveSelected(dx, dy);
       renderAll();
+      scheduleHistoryCommit();
     } else if (['ArrowLeft','ArrowRight','ArrowUp','ArrowDown'].includes(e.key) &&
                (state.panMode || active === $('#canvas-wrap'))) {
       e.preventDefault();
@@ -3992,12 +4230,20 @@ function bindKeyboard() {
   });
 
   document.addEventListener('keyup', e => {
+    if (historyArrowNudgeActive && ['ArrowLeft','ArrowRight','ArrowUp','ArrowDown'].includes(e.key)) {
+      historyArrowNudgeActive = false;
+      commitHistoryGroup();
+    }
     if (e.code !== 'Space' || !spacePanActive) return;
     spacePanActive = false;
     updatePanModeVisuals();
   });
 
   window.addEventListener('blur', () => {
+    if (historyArrowNudgeActive) {
+      historyArrowNudgeActive = false;
+      commitHistoryGroup();
+    }
     if (!spacePanActive) return;
     spacePanActive = false;
     updatePanModeVisuals();
