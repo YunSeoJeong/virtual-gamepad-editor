@@ -24,6 +24,7 @@
   --accent-soft: #dbeafe;
   --kb: #0284c7;
   --pad: #8b5cf6;
+  --foldchord: #059669;
   --danger: #ef4444;
   --danger-soft: #fee2e2;
   --ok: #10b981;
@@ -367,6 +368,7 @@ button:disabled,
 /* Color hint by input type */
 .gp-component[data-input-type="keyboard"] { border-color: #7dd3fc; }
 .gp-component[data-input-type="controller"] { border-color: #c4b5fd; }
+.gp-component[data-input-type="foldchord"] { border-color: #6ee7b7; }
 .gp-component.selected[data-input-type] { border-color: var(--accent); }
 
 /* Handles */
@@ -415,6 +417,7 @@ button:disabled,
 }
 .gp-component .badge.kb { color: var(--kb); border-color: var(--kb); }
 .gp-component .badge.pad { color: var(--pad); border-color: var(--pad); }
+.gp-component .badge.foldchord { color: var(--foldchord); border-color: var(--foldchord); }
 
 /* Selection box for marquee */
 .marquee {
@@ -1320,6 +1323,13 @@ button:disabled,
     <div class="section-title">Components</div>
     <div class="palette" id="palette"></div>
 
+    <div class="section-title">Templates</div>
+    <button type="button" class="tb-btn" id="btn-foldchord-template"
+      style="width: 100%; justify-content: center;">⌁ FoldChord MVP</button>
+    <div style="font-size:10px; color:var(--text-mute); margin:6px 4px 14px; line-height:1.45;">
+      메인 TL/TR + 미러링된 전면 6키 surface
+    </div>
+
     <div class="section-title">Layout Meta</div>
     <div class="field">
       <label class="field-label" for="meta-name">Layout name</label>
@@ -1574,6 +1584,12 @@ const CONTROLLER_AXIS_OPTIONS = [
   'LeftStickX','LeftStickY','RightStickX','RightStickY','Axis0','Axis1','Axis2','Axis3'
 ];
 
+const FOLDCHORD_KEY_OPTIONS = ['TL','TR','LI','LM','LR','RI','RM','RR'];
+const FOLDCHORD_TEMPLATE_SIZES = {
+  main: { width: 720, height: 132 },
+  sub: { width: 360, height: 800 }
+};
+
 // Mouse: based on MouseEvent.button (0~4) and MouseEvent.buttons bitmask (1,2,4,8,16).
 // Human-friendly names are exported by default, while index/mask aliases are offered for unambiguous runtimes.
 const MOUSE_BUTTON_OPTIONS = [
@@ -1607,11 +1623,12 @@ function buildBindingDatalists() {
   ensureDatalist('controller-button-list', CONTROLLER_BUTTON_OPTIONS);
   ensureDatalist('controller-axis-list', CONTROLLER_AXIS_OPTIONS);
   ensureDatalist('controller-any-list', [...CONTROLLER_BUTTON_OPTIONS, ...CONTROLLER_AXIS_OPTIONS]);
+  ensureDatalist('foldchord-key-list', FOLDCHORD_KEY_OPTIONS);
   ensureDatalist('mouse-button-list', MOUSE_BUTTON_OPTIONS);
   ensureDatalist('mouse-buttons-mask-list', MOUSE_BUTTON_MASK_OPTIONS);
   ensureDatalist('mouse-code-list', MOUSE_CODE_OPTIONS);
   ensureDatalist('touch-code-list', TOUCH_CODE_OPTIONS);
-  ensureDatalist('input-code-list', [...KEYBOARD_CODE_OPTIONS, ...CONTROLLER_BUTTON_OPTIONS, ...CONTROLLER_AXIS_OPTIONS, ...MOUSE_CODE_OPTIONS, ...TOUCH_CODE_OPTIONS]);
+  ensureDatalist('input-code-list', [...KEYBOARD_CODE_OPTIONS, ...CONTROLLER_BUTTON_OPTIONS, ...CONTROLLER_AXIS_OPTIONS, ...FOLDCHORD_KEY_OPTIONS, ...MOUSE_CODE_OPTIONS, ...TOUCH_CODE_OPTIONS]);
 }
 
 function bindingListFor(c, path) {
@@ -1621,10 +1638,123 @@ function bindingListFor(c, path) {
   if (path === 'binding.button' && inputType === 'mouse') return 'mouse-button-list';
   if (inputType === 'keyboard') return 'keyboard-code-list';
   if (inputType === 'mouse') return 'mouse-code-list';
+  if (inputType === 'foldchord') return 'foldchord-key-list';
   if (path === 'binding.axis' || path === 'binding.axisX' || path === 'binding.axisY') return 'controller-axis-list';
   if (path.startsWith('binding.') || path.startsWith('bindings.')) return inputType === 'controller' ? 'controller-button-list' : 'keyboard-code-list';
   if (path.includes('gestures.')) return 'input-code-list';
   return '';
+}
+
+function roundLayoutValue(value) {
+  return Math.round(value * 100) / 100;
+}
+
+function createFoldChordComponent(id, code, rect) {
+  return {
+    id,
+    type: 'button',
+    originalType: 'button',
+    subtype: 'normal',
+    label: code,
+    inputType: 'foldchord',
+    binding: code,
+    rect: {
+      x: roundLayoutValue(rect.x),
+      y: roundLayoutValue(rect.y),
+      w: roundLayoutValue(rect.w),
+      h: roundLayoutValue(rect.h)
+    },
+    style: {
+      shape: 'square',
+      color: '#059669',
+      bg: '#ecfdf5',
+      mouseIgnore: false
+    },
+    runtime: {
+      inputType: 'foldchord',
+      behavior: 'hold',
+      binding: { button: code },
+      multiTouch: true,
+      touchIdPolicy: 'lockUntilRelease',
+      z: 0
+    },
+    editor: { locked: false }
+  };
+}
+
+// Reference canvases use Android logical pixels (1 canvas unit = 1 dp).
+// The geometry mirrors ChordKeyboardView.buildThumbRegions/buildFingerRegions.
+function createFoldChordThumbComponents(width, height) {
+  const edge = 12;
+  const centerGap = Math.max(96, width * 0.22);
+  const keyWidth = (width - edge * 2 - centerGap) / 2;
+  return [
+    createFoldChordComponent('foldchord_main_tl', 'TL', {
+      x: edge, y: edge, w: keyWidth, h: height - edge * 2
+    }),
+    createFoldChordComponent('foldchord_main_tr', 'TR', {
+      x: width - edge - keyWidth, y: edge, w: keyWidth, h: height - edge * 2
+    })
+  ];
+}
+
+function createFoldChordFingerComponents(width, height) {
+  const top = 4;
+  const edge = 4;
+  const gap = 4;
+  const centerGap = Math.max(8, width * 0.025);
+  const columnWidth = (width - edge * 2 - centerGap) / 2;
+  const rowHeight = (height - top - edge - gap * 2) / 3;
+  const visualLeft = ['RI', 'RM', 'RR'];
+  const visualRight = ['LI', 'LM', 'LR'];
+  const components = [];
+
+  for (let row = 0; row < 3; row++) {
+    const y = top + row * (rowHeight + gap);
+    const inset = (2 - row) * 2;
+    components.push(createFoldChordComponent(`foldchord_sub_${visualLeft[row].toLowerCase()}`, visualLeft[row], {
+      x: edge + inset,
+      y,
+      w: columnWidth - inset,
+      h: rowHeight
+    }));
+    components.push(createFoldChordComponent(`foldchord_sub_${visualRight[row].toLowerCase()}`, visualRight[row], {
+      x: edge + columnWidth + centerGap,
+      y,
+      w: columnWidth - inset,
+      h: rowHeight
+    }));
+  }
+  return components;
+}
+
+function createFoldChordMvpTemplate() {
+  const main = FOLDCHORD_TEMPLATE_SIZES.main;
+  const sub = FOLDCHORD_TEMPLATE_SIZES.sub;
+  return {
+    version: SCHEMA_VERSION,
+    meta: {
+      name: 'FoldChord MVP',
+      description: 'FoldChord main thumb surface and mirrored cover finger surface',
+      version: SCHEMA_VERSION
+    },
+    resolutions: [
+      {
+        display: 'main',
+        displayTarget: 'main',
+        width: main.width,
+        height: main.height,
+        components: createFoldChordThumbComponents(main.width, main.height)
+      },
+      {
+        display: 'sub',
+        displayTarget: 'sub',
+        width: sub.width,
+        height: sub.height,
+        components: createFoldChordFingerComponents(sub.width, sub.height)
+      }
+    ]
+  };
 }
 
 /* ---------- State ---------- */
@@ -1887,9 +2017,9 @@ function init() {
   bindKeyboard();
   bindAlignButtons();
 
-  // First resolution by default
+  // Start with the FoldChord MVP input surfaces ready to edit.
   if (state.resolutions.length === 0) {
-    addResolution(1920, 1080);
+    loadProject(createFoldChordMvpTemplate(), false);
   }
   renderAll();
   fitZoom();
@@ -2204,7 +2334,9 @@ function renderComponents() {
               ${c.bg ? `background:${c.bg};` : ''}
               z-index:${c.runtime?.z ?? c.z ?? 0};`
     }, [
-      el('span', { class: 'badge ' + (c.inputType === 'keyboard' ? 'kb' : 'pad') }, c.inputType === 'keyboard' ? 'KB' : (c.inputType === 'mouse' ? 'MOUSE' : 'PAD')),
+      el('span', {
+        class: 'badge ' + (c.inputType === 'keyboard' ? 'kb' : (c.inputType === 'foldchord' ? 'foldchord' : 'pad'))
+      }, c.inputType === 'keyboard' ? 'KB' : (c.inputType === 'mouse' ? 'MOUSE' : (c.inputType === 'foldchord' ? 'FOLD' : 'PAD'))),
       el('span', { class: 'label' }, c.label || ''),
       ...(state.selectedIds.includes(c.id) && !c.locked && shouldShowResizeHandles(c)
         ? ['nw','ne','sw','se'].map(p => el('div', { class: `resize-handle ${p}` }))
@@ -2268,10 +2400,11 @@ function renderInspector() {
 
   // Input target
   const clickCapableTypes = ['button','key','combo','shoulder','trigger'];
+  const supportsFoldChord = ['button','key','combo','shoulder'].includes(c.type);
   const inputOptions = c.type === 'mouseScroll'
     ? [['mouse','Mouse']]
     : ((c.type === 'touchpad' || clickCapableTypes.includes(c.type))
-      ? [['controller','Controller'], ['keyboard','Keyboard'], ['mouse','Mouse']]
+      ? [['controller','Controller'], ['keyboard','Keyboard'], ['mouse','Mouse'], ...(supportsFoldChord ? [['foldchord','FoldChord']] : [])]
       : [['controller','Controller'], ['keyboard','Keyboard']]);
   wrap.appendChild(makeSelectField('Input target', c.inputType || c.runtime?.inputType || 'controller', inputOptions,
     v => { setComponentInputType(c, v); renderAll(); }));
@@ -2423,6 +2556,13 @@ function normalizeComponentRuntime(c, forceDefaults = false) {
         c.runtime.binding = c.type === 'combo'
           ? { buttons: splitBindingList(c.binding || 'MouseLeft,MouseRight') }
           : { button: c.binding || 'MouseLeft' };
+      }
+    } else if (c.inputType === 'foldchord') {
+      if (!c.runtime.binding || forceDefaults) {
+        const labelCode = String(c.label || '').trim().toUpperCase();
+        c.runtime.binding = {
+          button: FOLDCHORD_KEY_OPTIONS.includes(labelCode) ? labelCode : 'TL'
+        };
       }
     } else {
       if (!c.runtime.binding || forceDefaults) c.runtime.binding = { button: c.binding || defaultControllerButton(c.type, c.label) };
@@ -2597,7 +2737,7 @@ function addRuntimeSelectField(wrap, label, c, path, options, rerender = false) 
 function renderRuntimeInspectorFields(wrap, c) {
   normalizeComponentRuntime(c);
   wrap.appendChild(el('div', { class: 'section-title', style: 'margin-top:18px;' }, 'Runtime binding'));
-  wrap.appendChild(el('div', { style: 'font-size:10px; color:var(--text-mute); margin:-6px 0 10px; line-height:1.45;' }, '자동완성 기준: KeyboardEvent.code / W3C Standard Gamepad aliases + Button0~16, Axis0~3 / MouseEvent.button 0~4 + buttons bitmask'));
+  wrap.appendChild(el('div', { style: 'font-size:10px; color:var(--text-mute); margin:-6px 0 10px; line-height:1.45;' }, '자동완성 기준: KeyboardEvent.code / W3C Standard Gamepad aliases + Button0~16, Axis0~3 / FoldChord TL·TR·LI·LM·LR·RI·RM·RR / MouseEvent.button 0~4 + buttons bitmask'));
 
   if (['button','key','combo','shoulder'].includes(c.type)) {
     addRuntimeSelectField(wrap, 'Press behavior', c, 'behavior', [['hold','Hold while touched'],['tap','Tap once'],['toggle','Toggle']]);
@@ -2607,6 +2747,9 @@ function renderRuntimeInspectorFields(wrap, c) {
     } else if (c.inputType === 'mouse') {
       if (c.type === 'combo') addRuntimeTextField(wrap, 'Mouse buttons', c, 'binding.buttons', 'MouseLeft, MouseRight');
       else addRuntimeTextField(wrap, 'Mouse button', c, 'binding.button', 'MouseLeft, MouseRight, MouseMiddle');
+    } else if (c.inputType === 'foldchord') {
+      addRuntimeSelectField(wrap, 'FoldChord key', c, 'binding.button',
+        FOLDCHORD_KEY_OPTIONS.map(code => [code, code]));
     } else {
       addRuntimeTextField(wrap, 'Controller button', c, 'binding.button', 'A, B, X, Y, LB, RB');
     }
@@ -3544,6 +3687,12 @@ function bindTopbar() {
       addResolution(1920, 1080);
     });
     toast('새 레이아웃을 시작했습니다');
+  };
+
+  $('#btn-foldchord-template').onclick = () => {
+    if (!confirm('현재 작업을 FoldChord MVP 템플릿으로 바꿀까요?')) return;
+    loadProject(createFoldChordMvpTemplate());
+    toast('FoldChord MVP 레이아웃을 불러왔습니다');
   };
 
   $('#btn-undo').onclick = undoEdit;
