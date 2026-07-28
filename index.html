@@ -2689,6 +2689,7 @@ function normalizeComponentRuntime(c, forceDefaults = false) {
       c.runtime.binding = defaultTouchpadBinding(c.inputType, c.runtime.mode);
     }
     c.runtime.sensitivity = Number.isFinite(parseFloat(c.runtime.sensitivity)) ? parseFloat(c.runtime.sensitivity) : 1.0;
+    c.runtime.invertX = !!c.runtime.invertX;
     c.runtime.invertY = !!c.runtime.invertY;
     if (c.inputType === 'controller' && c.runtime.mode === 'analogStick') {
       c.runtime.role = 'analogStick';
@@ -2894,6 +2895,10 @@ function renderRuntimeInspectorFields(wrap, c) {
     }
 
     wrap.appendChild(makeTextField('Sensitivity', c.runtime.sensitivity ?? 1, v => { c.runtime.sensitivity = parseFloat(v) || 1; }));
+    wrap.appendChild(el('label', { class: 'checkbox' }, [
+      el('input', { type: 'checkbox', ...(c.runtime.invertX ? { checked: 'checked' } : {}), onchange: e => { c.runtime.invertX = e.target.checked; } }),
+      'Invert X'
+    ]));
     wrap.appendChild(el('label', { class: 'checkbox' }, [
       el('input', { type: 'checkbox', ...(c.runtime.invertY ? { checked: 'checked' } : {}), onchange: e => { c.runtime.invertY = e.target.checked; } }),
       'Invert Y'
@@ -4197,6 +4202,7 @@ function normalizeRuntimeForExport(c) {
     rt.deadzone = Number.isFinite(parseFloat(rt.deadzone)) ? parseFloat(rt.deadzone) : 0.15;
     rt.maxDelta = Number.isFinite(parseFloat(rt.maxDelta ?? rt.radius)) ? parseFloat(rt.maxDelta ?? rt.radius) : 24;
     rt.sensitivity = Number.isFinite(parseFloat(rt.sensitivity)) ? parseFloat(rt.sensitivity) : 1;
+    rt.invertX = !!rt.invertX;
     rt.invertY = !!rt.invertY;
     delete rt.radius;
     delete rt.origin;
